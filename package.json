@@ -14,8 +14,14 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
+    "@types/express": "^5.0.3",
     "@types/node": "^24.9.1",
     "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
+    "express": "^5.1.0"
   }
 }
