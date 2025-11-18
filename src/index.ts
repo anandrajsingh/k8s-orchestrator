@@ -1,5 +1,6 @@
 import express from "express"
 import * as k8s from "@kubernetes/client-node"
+import { Writable } from "stream";
 
 const kc = new k8s.KubeConfig()
 kc.loadFromDefault();
@@ -58,6 +59,68 @@ app.post("/sandbox/delete", async(req, res) => {
     const {namespace, name} = req.body
     const pod = await client.deleteNamespacedPod({namespace, name})
     res.json(pod)
+})
+
+app.post("/sandbox/:name/logs", async(req, res) => {
+    const {name} = req.params;
+    const {namespace, containerName} = req.body;
+    const log = new k8s.Log(kc)
+
+    let logs = '';
+    const writabeStream = new Writable({
+        write(chunk, encoding, callback){
+            logs += chunk.toString()
+            callback()
+        }
+    })
+
+    await log.log(
+    namespace,
+    name,
+    containerName,
+    writabeStream,
+    { follow: false }
+  );
+  await new Promise(res => setTimeout(res, 100))
+    res.json(logs)
+})
+
+app.post("/sandbox/:name/exec", async(req, res) => {
+    const {name} = req.params;
+    const {namespace, containerName, command} = req.body;
+    const exec = new k8s.Exec(kc);
+
+    // await exec.exec(namespace, name, containerName,command, process.stdout, process.stderr, process.stdin, false )
+
+    let stdOut = ''
+    let stdErr = ''
+
+    const stdOutStream = new Writable({
+        write(chunk, encoding, callback){
+            stdOut += chunk.toString()
+            process.stdout.write(chunk.toString())
+            callback()
+        }
+    })
+    const stdErrStream = new Writable({
+        write(chunk, encoding, callback){
+            stdErr += chunk.toString()
+            process.stderr.write(chunk.toString())
+            callback()
+        }
+    })
+    await exec.exec(
+        namespace, 
+        name, 
+        containerName, 
+        command,
+        stdOutStream, 
+        stdErrStream, 
+        null, 
+        false
+    )
+    await new Promise(res => setTimeout(res, 100));
+    res.json({stdOut, stdErr})
 })
 
 app.listen(4001, () => console.log("App listening on port 4001"))
