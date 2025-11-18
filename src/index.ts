@@ -9,21 +9,28 @@ const client = kc.makeApiClient(k8s.CoreV1Api)
 const app = express()
 app.use(express.json())
 
-app.post("/pod/list", async (req, res) => {
+app.get("/sandbox/list", async (req, res) => {
     const { namespace } = req.body
     const pods = await client.listNamespacedPod({namespace})
     res.json(pods)
 })
 
-app.post("/pod/create", async (req, res) => {
+app.post("/sandbox/create", async (req, res) => {
 
-    const {name, namespace, labels, containers, restartPolicy} = req.body
+    const {name, namespace, labels, containers, restartPolicy} = req.body;
+
+    const extendedLabels = {
+        ...labels,
+        sandboxttl : String(Date.now() + 1800*1000)
+    }
+
+    console.log(extendedLabels)
 
     const podManifest: k8s.V1Pod = {
         metadata: {
             name,
             namespace,
-            labels,
+            labels: extendedLabels,
         },
         spec: {
             containers,
@@ -36,7 +43,18 @@ app.post("/pod/create", async (req, res) => {
     res.json(pod)
 })
 
-app.post("/pod/delete", async(req, res) => {
+app.post("/sandbox/status", async(req, res) => {
+    const {name, namespace} = req.body;
+
+    const pod = await client.readNamespacedPodStatus({name, namespace})
+    const phase = pod.status?.phase
+    console.log(pod.status)
+
+    const events = await client.listNamespacedEvent({namespace, fieldSelector: `involvedObject.name=${name}`})
+    res.json(phase)
+})
+
+app.post("/sandbox/delete", async(req, res) => {
     const {namespace, name} = req.body
     const pod = await client.deleteNamespacedPod({namespace, name})
     res.json(pod)
