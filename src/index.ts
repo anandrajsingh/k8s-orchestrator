@@ -12,6 +12,16 @@ const client = kc.makeApiClient(k8s.CoreV1Api)
 const app = express()
 app.use(express.json())
 
+const server = http.createServer(app)
+const wss = new WebSocketServer({server})
+
+const agents = new Map()
+const pendingRuns = new Map()
+
+function genId(){
+    return Math.random().toString(36).slice(2)
+}
+
 app.get("/sandbox/list", async (req, res) => {
     const { namespace } = req.body
     const pods = await client.listNamespacedPod({namespace})
@@ -153,4 +163,34 @@ app.post("/sandbox/:name/exec", async(req, res) => {
     res.json({stdOut, stdErr})
 })
 
-app.listen(4001, () => console.log("App listening on port 4001"))
+wss.on("connection", ws => {
+    console.log("Manager WS connected")
+
+    ws.on("message", raw => {
+        let msg;
+        try {
+            msg = JSON.parse(raw.toString())
+        } catch (error) {
+            return
+        }
+
+        if(msg.type === "register"){
+            console.log("Agent registered: ", msg.sandboxId)
+            agents.set(msg.sandboxId, ws)
+        }
+
+        if(msg.type === "run_result"){
+            const resolve = pendingRuns.get(msg.requestId);
+            if(resolve){
+                resolve(msg)
+                pendingRuns.delete(msg.requestId)
+            }
+        }
+    })
+
+    ws.on("close", () => {
+        console.log("WS closed")
+    })
+})
+
+app.listen(4001, () => console.log("Manager running on port 4001"))
