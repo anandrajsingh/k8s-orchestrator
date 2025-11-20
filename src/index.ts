@@ -1,6 +1,8 @@
 import express from "express"
 import * as k8s from "@kubernetes/client-node"
 import { Writable } from "stream";
+import http from "http"
+import { WebSocketServer } from "ws"
 
 const kc = new k8s.KubeConfig()
 kc.loadFromDefault();
@@ -59,6 +61,34 @@ app.post("/sandbox/delete", async(req, res) => {
     const {namespace, name} = req.body
     const pod = await client.deleteNamespacedPod({namespace, name})
     res.json(pod)
+})
+
+app.post("/sandbox/create-agent", async( req, res) => {
+    const { name, namespace, labels, containers, restartPolicy} = req.body;
+
+    const extendedLabels = {
+        ...labels,
+        sandboxttl: String(Date.now() + 1800*1000)
+    }
+
+    const podManifest: k8s.V1Pod = {
+        metadata: {
+            name,
+            namespace,
+            labels: extendedLabels
+        },
+        spec: {
+            containers,
+            restartPolicy
+        }
+    }
+
+    const pod = await client.createNamespacedPod({namespace, body: podManifest})
+    res.json(pod)
+})
+
+app.post("/sandbox/:name/run-js", async(req, res)=> {
+
 })
 
 app.post("/sandbox/:name/logs", async(req, res) => {
