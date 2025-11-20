@@ -1,0 +1,9 @@
+{
+  "name": "sandbox-agent",
+  "version": "1.0.0",
+  "main": "agent.js",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.17.0"
+  }
+}
