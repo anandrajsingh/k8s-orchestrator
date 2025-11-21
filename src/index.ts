@@ -98,7 +98,34 @@ app.post("/sandbox/create-agent", async( req, res) => {
 })
 
 app.post("/sandbox/:name/run-js", async(req, res)=> {
+    const { code } = req.body;
+    const { name } = req.params;
 
+    const ws = agents.get(name)
+    if(!ws || ws.readyState !== ws.OPEN){
+        return res.status(400).json({error: "Agent not connected"})
+    }
+
+    const requestId = genId()
+
+    ws.send(JSON.stringify({
+        type: "run_js",
+        requestId,
+        code
+    }))
+
+    const result = await new Promise(resolve => {
+        pendingRuns.set(requestId, resolve)
+
+        setTimeout(() => {
+            if(pendingRuns.has(requestId)){
+                pendingRuns.delete(requestId)
+                resolve({success: false, error: "Timeout"})
+            }
+        }, 15000)
+    })
+
+    res.json(result)
 })
 
 app.post("/sandbox/:name/logs", async(req, res) => {
