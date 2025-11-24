@@ -1,12 +1,14 @@
 import WebSocket from "ws";
 import { spawn } from "child_process";
 import os from "os"
+import path from "path";
+import fs from "fs"
 
 const MANAGER_WS_URL = process.env.MANAGER_WS_URL || "ws://localhost:4001/agent";
 const SANDBOX_ID = process.env.SANDBOX_ID || process.env.HOSTNAME || os.hostname()
 
 const MAX_CONCURRENT_RUN = Number(process.env.MAX_CONCURRENT_RUN || 2)
-const MAX_QUEUE_LENGTH = Number(process.env.MAX_QUEUE_LENTH || 50)
+const MAX_QUEUE_LENGTH = Number(process.env.MAX_QUEUE_LENGTH || 50)
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.DEFAULT_TIMEOUT_MS || 15000)
 
@@ -32,10 +34,74 @@ type RunState = {
     timeout: NodeJS.Timeout
 }
 
+type FsReadMessage = {
+    type: "fs:read",
+    requestId: string,
+    path: string
+}
+
+type FsWriteMessage = {
+    type: "fs:write",
+    requestId: string,
+    path: string,
+    data: string
+}
+
 let ws: WebSocket | null = null;
 const queue: QueueItem[] = []
 
 const activeRuns = new Map<string, RunState>();
+let heartbeatInterval: NodeJS.Timeout | null = null;
+
+function resolvePath(urlPath: string): string {
+    const base = "/sandbox";
+    const resolved = path.resolve(base, urlPath)
+
+    if (!resolved.startsWith(base)) {
+        throw new Error("Invalid path.")
+    }
+    return resolved;
+}
+
+function handleFsRead(msg: FsReadMessage) {
+    try {
+        const filepath = resolvePath(msg.path);
+
+        fs.readFile(filepath, "utf8", (err, data) => {
+            if (err) {
+                send({
+                    type: "fs:read:error",
+                    requestId: msg.requestId,
+                    error: err.message
+                })
+                return;
+            }
+            send({
+                type: "fs:read:ok",
+                requestId: msg.requestId,
+                data
+            })
+        })
+    } catch (e: any) {
+        send({ type: "fs:read:error", requestId: msg.requestId, error: e.message })
+    }
+}
+
+function handleFsWrite(msg: FsWriteMessage) {
+    try {
+        const filepath = resolvePath(msg.path);
+
+        fs.writeFile(filepath, msg.data, "utf8", (err) => {
+            if (err) {
+                send({ type: "fs:write:error", requestId: msg.requestId, error: err.message })
+                return;
+            }
+            send({ type: "fs:write:ok", requestId: msg.requestId });
+        })
+    } catch (error: any) {
+        send({type: "fs:write:error", requestId: msg.requestId, error: error.message})
+    }
+}
 
 function send(msg: any) {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -51,7 +117,7 @@ function tryStartNextRun() {
     }
 }
 
-function enqueque(req: RunRequest) {
+function enqueue(req: RunRequest) {
     if (activeRuns.size >= MAX_CONCURRENT_RUN && queue.length >= MAX_QUEUE_LENGTH) {
         console.log("Rejecting run overload: ", req.requestId)
         send({
@@ -103,7 +169,7 @@ function startRun(req: RunRequest) {
 
     proc.stdout.on("data", (chunk) => {
         const text = chunk.toString()
-        process.stdout.write(chunk)
+        // process.stdout.write(chunk)
 
         send({
             type: "run_output",
@@ -115,7 +181,7 @@ function startRun(req: RunRequest) {
 
     proc.stderr.on("data", (chunk) => {
         const text = chunk.toString()
-        process.stderr.write(text)
+        // process.stderr.write(text)
 
         send({
             type: "run_output",
@@ -143,7 +209,7 @@ function startRun(req: RunRequest) {
             type: "run_result",
             requestId,
             success,
-            exitcode: code,
+            exitCode: code,
             error: killedByTimeout
                 ? "Killed by timeout"
                 : success
@@ -179,10 +245,11 @@ function cancelRun(requestId: string) {
 }
 
 function startHeartBeat() {
-    setInterval(() => {
+    if(heartbeatInterval) clearInterval(heartbeatInterval)
+    heartbeatInterval = setInterval(() => {
         send({
             type: "heartbeat",
-            sandboxid: SANDBOX_ID,
+            sandboxId: SANDBOX_ID,
             ts: Date.now(),
             activeRuns: activeRuns.size,
             queueLength: queue.length,
@@ -221,7 +288,47 @@ function handleMessage(raw: any) {
                 })
                 return;
             }
-            enqueque(req)
+            enqueue(req)
+            break;
+        }
+        case "fs:read": {
+            const req: FsReadMessage = {
+                type: "fs:read",
+                requestId: msg.requestId,
+                path: msg.path
+            }
+
+            if(!req.requestId || typeof req.path !== "string"){
+                send({
+                    type: "run_result",
+                    requestId: req.requestId || "unknown",
+                    success: false,
+                    exitCode : null,
+                    error: "Invalid fs:read payload"
+                })
+                return
+            }
+            handleFsRead(req)
+            break;
+        }
+        case "fs:write": {
+            const req: FsWriteMessage = {
+                type : "fs:write",
+                requestId: msg.requestId,
+                path: msg.path,
+                data: msg.data
+            }
+            if(!req.requestId || typeof req.path !== "string" ){
+                send({
+                    type: "run_result",
+                    requestId: req.requestId || "unknown",
+                    success: false,
+                    exitCode: null,
+                    error: "Invalid fs:write payload"
+                })
+                return;
+            }
+            handleFsWrite(req)
             break;
         }
         case "cancel_run": {
@@ -230,7 +337,7 @@ function handleMessage(raw: any) {
             cancelRun(cancelReq.requestId)
             break;
         }
-        default: 
+        default:
             console.log("Unknow message type: ", msg.type)
     }
 }
@@ -246,7 +353,7 @@ function connect(){
             type: "register",
             sandboxId: SANDBOX_ID,
             protocolVersion: 1,
-            capabilities: ["run_js", "stream_output", 'cancel_run']
+            capabilities: ["run_js", "stream_output", 'cancel_run', "fs"]
         })
 
         startHeartBeat()
