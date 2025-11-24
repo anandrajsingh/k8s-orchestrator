@@ -87,9 +87,35 @@ function handleFsRead(msg: FsReadMessage) {
     }
 }
 
-function handleFsWrite(msg: FsWriteMessage) {
+function handleFsWrite(msg: FsWriteMessage & {binary?:boolean}) {
     try {
         const filepath = resolvePath(msg.path);
+
+        if(typeof msg.data !== "string"){
+            send({
+                type: "fs:write:error",
+                requestId: msg.requestId,
+                error: "Data must be in string format"
+            })
+            return;
+        }
+
+        if(msg.binary){
+            const buffer = Buffer.from(msg.data, "base64");
+
+            fs.writeFile(filepath, buffer, (err) => {
+                if(err){
+                    send({
+                        type: "fs:write:error",
+                        requestId: msg.requestId,
+                        error: err.message
+                    })
+                    return;
+                }
+                send({type: "fs:write:ok", requestId: msg.requestId})
+            })
+            return;
+        }
 
         fs.writeFile(filepath, msg.data, "utf8", (err) => {
             if (err) {
