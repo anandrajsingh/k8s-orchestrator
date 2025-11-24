@@ -60,7 +60,10 @@ function resolvePath(urlPath: string): string {
     if (!resolved.startsWith(base)) {
         throw new Error("Invalid path.")
     }
-    return resolved;
+
+    const real = fs.realpathSync(resolved)
+    if(!real.startsWith(base)) throw new Error("Invalid path")
+    return real;
 }
 
 function handleFsRead(msg: FsReadMessage) {
@@ -144,7 +147,7 @@ function tryStartNextRun() {
 }
 
 function enqueue(req: RunRequest) {
-    if (activeRuns.size >= MAX_CONCURRENT_RUN && queue.length >= MAX_QUEUE_LENGTH) {
+    if (queue.length >= MAX_QUEUE_LENGTH) {
         console.log("Rejecting run overload: ", req.requestId)
         send({
             type: "run_result",
@@ -391,6 +394,13 @@ function connect(){
 
     ws.on("close", () => {
         console.log("Ws closed, reconnecting in 2s...")
+        
+        for (const [requestId, state] of activeRuns.entries()){
+            state.proc.kill("SIGKILL")
+            clearTimeout(state.timeout)
+            activeRuns.delete(requestId)
+        }
+
         setTimeout(connect, 2000)
     })
 
