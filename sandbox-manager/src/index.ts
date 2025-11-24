@@ -113,6 +113,7 @@ app.post("/sandbox/:name/run-js", async(req, res)=> {
         requestId,
         code
     }))
+    // console.log(pendingRuns)
 
     const result = await new Promise(resolve => {
         pendingRuns.set(requestId, resolve)
@@ -123,6 +124,7 @@ app.post("/sandbox/:name/run-js", async(req, res)=> {
                 resolve({success: false, error: "Timeout"})
             }
         }, 15000)
+        console.log(pendingRuns)
     })
 
     res.json(result)
@@ -220,4 +222,4 @@ wss.on("connection", ws => {
     })
 })
 
-app.listen(4001, () => console.log("Manager running on port 4001"))
+server.listen(4001, () => console.log("Manager running on port 4001"))
