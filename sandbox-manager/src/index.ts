@@ -117,6 +117,48 @@ async function runJsOnAgent(params: {
     return result;
 }
 
+async function runCommandOnAgent(params: {
+    agent: AgentInfo,
+    projectId: string,
+    cmd:string,
+    timeOutMs?:number
+}): Promise<any>{
+    const { agent, projectId, cmd, timeOutMs=15000} = params;
+    if(agent.ws.readyState !== agent.ws.OPEN){
+        throw new Error("Agent WebSocket is not open")
+    }
+
+    const requestId = genId()
+
+    const payload = {
+        type: "run",
+        projectId,
+        requestId,
+        cmd,
+        timeOutMs
+    }
+
+    agent.ws.send(JSON.stringify(payload));
+
+    const result = await new Promise((resolve) => {
+        pendingRequests.set(requestId, resolve);
+
+        setTimeout(() => {
+            if(pendingRequests.has(requestId)){
+                pendingRequests.delete(requestId);
+                resolve({
+                    type: "run_result",
+                    projectId,
+                    success: false,
+                    exitCode: null,
+                    error: "Timeout in manager while waiting for run result"
+                })
+            }
+        }, timeOutMs + 1000)
+    })
+    return result
+}
+
 app.get("/sandbox/list", async (req, res) => {
     const { namespace } = req.body
     const pods = await client.listNamespacedPod({namespace})
@@ -234,6 +276,32 @@ app.post("sandbox/:projectId/run-js", async (req, res) => {
             agent,
             projectId,
             code,
+            timeOutMs
+        })
+        res.json(result)
+    } catch (error: any) {
+        res.status(500).json({error: error.message || "Run failed in manager"})
+    }
+})
+
+app.post("/sandbox/:projectId/run", async(req, res) => {
+    const { projectId } = req.params
+    const { cmd, timeOutMs } = req.body;
+
+    if(typeof cmd !== "string" || cmd.trim().length === 0){
+        return res.status(400).json({error: "cmd must be a non-empty string"});
+    }
+
+    const agent = getAgentForProject(projectId)
+    if(!agent) {
+        return res.status(503).json({error: "No agents available"})
+    }
+
+    try {
+        const result = await runCommandOnAgent({
+            agent,
+            projectId,
+            cmd,
             timeOutMs
         })
         res.json(result)
@@ -400,7 +468,7 @@ app.post("/sandbox/:name/exec", async(req, res) => {
     res.json({stdOut, stdErr})
 })
 
-app.get("/project/:projectId/stream/:requestId", async(req, res) => {
+app.get("/sandbox/:projectId/stream/:requestId", async(req, res) => {
     const { projectId, requestId} = req.params;
     res.writeHead(200, {
     "Content-Type": "text/event-stream",

@@ -258,6 +258,14 @@ function startRun(req: RunRequest) {
     if (req.type === "run_js" && code) {
         command = "node";
         args = ["-e", code]
+    } else if (req.type === "run"){
+        if(!req.cmd){
+            send({type: "run_result", projectId, requestId, success: false, exitCode: null, error: "No cmd provided for run"})
+            finishedRuns.add(key)
+            return
+        }
+        command = "sh",
+        args = ["-lc", req.cmd]
     }
 
     if (!command) {
@@ -266,7 +274,7 @@ function startRun(req: RunRequest) {
         return;
     }
 
-    console.log('Starting run: ', requestId);
+    console.log('Starting run: ', projectId, ": ", requestId, " cmd: ", command, args);
     send({
         type: "run_started",
         projectId,
