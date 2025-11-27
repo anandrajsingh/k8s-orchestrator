@@ -27,9 +27,14 @@ type AgentInfo = {
 const agents = new Map<string, AgentInfo>();
 const projectAgents = new Map<string, string>();
 const pendingRequests = new Map<string, (result: any)=> void>()
+const streams = new Map<string, Set<express.Response>>();
 
 function genId(){
     return Math.random().toString(36).slice(2)
+}
+
+function streamKey(projectId: string, requestId: string){
+    return `${projectId}:${requestId}`
 }
 
 function pickBestAgent(){
@@ -395,6 +400,30 @@ app.post("/sandbox/:name/exec", async(req, res) => {
     res.json({stdOut, stdErr})
 })
 
+app.get("/project/:projectId/stream/:requestId", async(req, res) => {
+    const { projectId, requestId} = req.params;
+    res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive"
+  });
+
+  const key = streamKey(projectId, requestId)
+
+  if(!streams.has(key)){
+    streams.set(key, new Set())
+  }
+  streams.get(key)!.add(res)
+
+  req.on("close", () => {
+    const set = streams.get(key);
+    if(!set) return;
+    set.delete(res);
+    if(set.size === 0) streams.delete(key)
+  })
+  res.write(`event: connected\ndata: connected\n\n`)
+})
+
 wss.on("connection", (ws) => {
     console.log("Agent WS connected")
 
@@ -446,6 +475,13 @@ wss.on("connection", (ws) => {
                 resolve(msg)
                 pendingRequests.delete(msg.requestId)
             }
+
+            const key = streamKey(msg.projectId, msg.requestId)
+            const set = streams.get(key)
+            if(set){
+                for(const res of set) res.end()
+                    streams.delete(key)
+            }
             return
         }
 
@@ -468,9 +504,15 @@ wss.on("connection", (ws) => {
         }
 
         if(msg.type === "run_output"){
-            const stream = msg.stream || "stdout";
-            const chunk = msg.chunk || "";
-            console.log(`Agent run output ${stream}`,chunk)
+            const { projectId, requestId, stream, chunk } = msg;
+            const key = streamKey(projectId, requestId)
+
+            const set = streams.get(key)
+            if(set){
+                for(const res of set){
+                    res.write(`event: output\ndata: ${JSON.stringify({stream, chunk})}\n\n`)
+                }
+            }
             return;
         }
     })
