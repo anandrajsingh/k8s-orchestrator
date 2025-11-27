@@ -237,6 +237,102 @@ app.post("sandbox/:projectId/run-js", async (req, res) => {
     }
 })
 
+app.post("/sandbox/:projectId/fs/read", async(req, res) => {
+    const {projectId} = req.params;
+    const { path, binary } = req.body;
+
+    const agent = getAgentForProject(projectId)
+    if(!agent){
+        return res.json(503).json({error: "No agent available"})
+    }
+
+    if(agent.ws.readyState !==WebSocket.OPEN){
+        return res.json(500).json({error: "Agent websocket not open"})
+    }
+
+    const requestId = genId()
+
+    const payload = {
+        type: "fs:read",
+        projectId,
+        requestId,
+        path,
+        binary
+    }
+
+    agent.ws.send(JSON.stringify(payload))
+
+    try {
+        const result = await new Promise((resolve) => {
+            pendingRequests.set(requestId, resolve)
+
+            setTimeout(() => {
+                if(pendingRequests.has(requestId)){
+                    pendingRequests.delete(requestId);
+                    resolve({
+                        type: "fs:read:error",
+                        projectId,
+                        requestId,
+                        error: "Timeout in manager while waiting for fs:read response."
+                    })
+                }
+            }, 15000)
+        })
+
+        res.json(result)
+    } catch (err: any) {
+        res.json({error: err.message || "fs:read failed in manager"})
+    }
+})
+
+app.post("/sandbox/:projectId/fs/write", async(req, res) => {
+    const { projectId } = req.params;
+    const { path, data, binary } = req.body;
+
+    const agent = getAgentForProject(projectId);
+    if (!agent) {
+    return res.status(503).json({ error: "No agents available" });
+  }
+
+  if (agent.ws.readyState !== WebSocket.OPEN) {
+    return res.status(500).json({ error: "Agent WebSocket not open" });
+  }
+
+    const requestId = genId()
+
+    const payload = {
+        type: "fs:write",
+        projectId,
+        path,
+        data,
+        binary
+    }
+
+    agent.ws.send(JSON.stringify(payload))
+
+    try {
+        const result = await new Promise((resolve) => {
+            pendingRequests.set(requestId,resolve)
+
+            setTimeout(() => {
+                if(pendingRequests.has(requestId)){
+                    pendingRequests.delete(requestId);
+                    resolve({
+                        type: "fs:write:error",
+                        projectId,
+                        requestId,
+                        error: "Timeout in manager while waiting for fs:write response"
+                    })
+                }
+            }, 15000)
+        })
+
+        res.json(result)
+    } catch (err:any) {
+        res.status(500).json({error: err.message || "fs:write failed in manager"})
+    }
+})
+
 app.post("/sandbox/:name/logs", async(req, res) => {
     const {name} = req.params;
     const {namespace, containerName} = req.body;
@@ -350,6 +446,25 @@ wss.on("connection", (ws) => {
                 resolve(msg)
                 pendingRequests.delete(msg.requestId)
             }
+            return
+        }
+
+        if(msg.type === "fs:read:ok" || msg.type === "fs:read:error"){
+            const resolve = pendingRequests.get(msg.requestId);
+            if(resolve){
+                resolve(msg)
+                pendingRequests.delete(msg.requestId)
+            }
+            return;
+        }
+
+        if(msg.type === "fs:write:ok" || msg.type === "fs:write:error"){
+            const resolve = pendingRequests.get(msg.requestId)
+            if(resolve){
+                resolve(msg)
+                pendingRequests.delete(msg.requestId)
+            }
+            return;
         }
 
         if(msg.type === "run_output"){
