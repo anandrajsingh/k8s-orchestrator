@@ -26,7 +26,7 @@ type AgentInfo = {
 
 const agents = new Map<string, AgentInfo>();
 const projectAgents = new Map<string, string>();
-const pendingRuns = new Map<string, (result: any)=> void>()
+const pendingRequests = new Map<string, (result: any)=> void>()
 
 function genId(){
     return Math.random().toString(36).slice(2)
@@ -92,11 +92,11 @@ async function runJsOnAgent(params: {
     agent.ws.send(JSON.stringify(payload))
 
     const result = await new Promise((resolve) => {
-        pendingRuns.set(requestId, resolve);
+        pendingRequests.set(requestId, resolve);
 
         setTimeout(() => {
-            if(pendingRuns.has(requestId)){
-                pendingRuns.delete(requestId);
+            if(pendingRequests.has(requestId)){
+                pendingRequests.delete(requestId);
                 resolve({
                     type: "run_result",
                     projectId,
@@ -345,10 +345,10 @@ wss.on("connection", (ws) => {
         }
 
         if(msg.type === "run_result"){
-            const resolve = pendingRuns.get(msg.requestId);
+            const resolve = pendingRequests.get(msg.requestId);
             if(resolve){
                 resolve(msg)
-                pendingRuns.delete(msg.requestId)
+                pendingRequests.delete(msg.requestId)
             }
         }
 
