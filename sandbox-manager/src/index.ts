@@ -2,7 +2,7 @@ import express from "express"
 import * as k8s from "@kubernetes/client-node"
 import { Writable } from "stream";
 import http from "http"
-import { WebSocketServer } from "ws"
+import { WebSocketServer, WebSocket } from "ws"
 
 const kc = new k8s.KubeConfig()
 kc.loadFromDefault();
@@ -15,11 +15,101 @@ app.use(express.json())
 const server = http.createServer(app)
 const wss = new WebSocketServer({server})
 
-const agents = new Map()
-const pendingRuns = new Map()
+type AgentInfo = {
+    id: string,
+    ws: WebSocket,
+    lastHeartbeat: number,
+    activeRuns: number,
+    queueLength: number,
+    capabilities? : string[]
+}
+
+const agents = new Map<string, AgentInfo>();
+const projectAgents = new Map<string, string>();
+const pendingRuns = new Map<string, (result: any)=> void>()
 
 function genId(){
     return Math.random().toString(36).slice(2)
+}
+
+function pickBestAgent(){
+    let best: AgentInfo | null = null;
+
+    for (const agent of agents.values()){
+        if(!best){
+            best = agent;
+            continue;
+        }
+        if(agent.activeRuns < best.activeRuns){
+            best = agent;
+        }else if (
+            agent.activeRuns === best.activeRuns && agent.queueLength < best.queueLength
+        ){
+            best = agent
+        }
+    }
+    return best;
+}
+
+function getAgentForProject(projectId: string){
+    const existingAgentId = projectAgents.get(projectId)
+    if(existingAgentId){
+        const agent = agents.get(existingAgentId)
+        if(agent) return agent;
+
+        projectAgents.delete(projectId)
+    }
+
+    const newAgent = pickBestAgent()
+    if(!newAgent) return null;
+
+    projectAgents.set(projectId, newAgent.id)
+    return newAgent;
+}
+
+async function runJsOnAgent(params: {
+    agent: AgentInfo,
+    projectId: string,
+    code: string,
+    timeOutMs?:number
+}): Promise<any>{
+    const { agent, projectId, code, timeOutMs = 15000 } = params;
+
+    if(agent.ws.readyState !== WebSocket.OPEN){
+        throw new Error ("Agent WebSocket is not open.")
+    }
+
+    const requestId = genId();
+
+    const payload = {
+        type: "run_js",
+        projectId,
+        requestId,
+        code,
+        timeOutMs
+    }
+
+    agent.ws.send(JSON.stringify(payload))
+
+    const result = await new Promise((resolve) => {
+        pendingRuns.set(requestId, resolve);
+
+        setTimeout(() => {
+            if(pendingRuns.has(requestId)){
+                pendingRuns.delete(requestId);
+                resolve({
+                    type: "run_result",
+                    projectId,
+                    requestId,
+                    success: false,
+                    exitCode: null,
+                    error: "Timeout in manager wile waiting for run result."
+                })
+            }
+        }, timeOutMs + 3000)
+    })
+
+    return result;
 }
 
 app.get("/sandbox/list", async (req, res) => {
@@ -98,36 +188,53 @@ app.post("/sandbox/create-agent", async( req, res) => {
 })
 
 app.post("/sandbox/:name/run-js", async(req, res)=> {
-    const { code } = req.body;
+    const { code, projectId } = req.body;
     const { name } = req.params;
 
-    const ws = agents.get(name)
+    const ws = agents.get(name)?.ws
     if(!ws || ws.readyState !== ws.OPEN){
         return res.status(400).json({error: "Agent not connected"})
     }
 
-    const requestId = genId()
+    const agent = agents.get(name)!;
+    const effectiveProjectId = projectId || `sandbox-${name}`;
 
-    ws.send(JSON.stringify({
-        type: "run_js",
-        requestId,
-        code
-    }))
-    // console.log(pendingRuns)
+    try {
+        const result = await runJsOnAgent({
+            agent,
+            projectId: effectiveProjectId,
+            code,
+        })
+        res.json(result)
+    } catch (error:any) {
+        res.status(500).json({error: error.message || "Run failed in manager"})
+    }
+})
 
-    const result = await new Promise(resolve => {
-        pendingRuns.set(requestId, resolve)
+app.post("sandbox/:projectId/run-js", async (req, res) => {
+    const { projectId } = req.params;
+    const { code, timeOutMs } = req.body;
 
-        setTimeout(() => {
-            if(pendingRuns.has(requestId)){
-                pendingRuns.delete(requestId)
-                resolve({success: false, error: "Timeout"})
-            }
-        }, 15000)
-        console.log(pendingRuns)
-    })
+    if(typeof code !== "string"){
+        return res.status(400).json({error: "Code must be in string format"})
+    }
 
-    res.json(result)
+    const agent = getAgentForProject(projectId);
+    if (!agent) {
+        return res.status(503).json({error: "No Agents available"})
+    }
+
+    try {
+        const result = await runJsOnAgent({
+            agent,
+            projectId,
+            code,
+            timeOutMs
+        })
+        res.json(result)
+    } catch (error: any) {
+        res.status(500).json({error: error.message || "Run failed in manager"})
+    }
 })
 
 app.post("/sandbox/:name/logs", async(req, res) => {
@@ -192,20 +299,49 @@ app.post("/sandbox/:name/exec", async(req, res) => {
     res.json({stdOut, stdErr})
 })
 
-wss.on("connection", ws => {
-    console.log("Manager WS connected")
+wss.on("connection", (ws) => {
+    console.log("Agent WS connected")
+
+    let agentId:string;
 
     ws.on("message", raw => {
         let msg;
         try {
             msg = JSON.parse(raw.toString())
         } catch (error) {
+            console.log("Failed to parse WS message from agent.")
             return
         }
 
         if(msg.type === "register"){
-            console.log("Agent registered: ", msg.sandboxId)
-            agents.set(msg.sandboxId, ws)
+            agentId = msg.sandboxId;
+            console.log("Agent registered: ", agentId)
+
+            const info : AgentInfo = {
+                id: agentId,
+                ws,
+                lastHeartbeat: Date.now(),
+                activeRuns: 0,
+                queueLength: 0,
+                capabilities: msg.capabilities || []
+            }
+            agents.set(agentId, info)
+            return;
+        }
+
+        if(msg.type === "heartbeat"){
+            if(!msg.sandboxId) return;
+            const info = agents.get(msg.sandboxId)
+            if(info){
+                info.lastHeartbeat = Date.now()
+                if(typeof msg.activeRuns === "number"){
+                    info.activeRuns = msg.activeRuns;
+                }
+                if(typeof msg.queueLength === "number"){
+                    info.queueLength = msg.queueLength;
+                }
+            }
+            return;
         }
 
         if(msg.type === "run_result"){
@@ -215,10 +351,26 @@ wss.on("connection", ws => {
                 pendingRuns.delete(msg.requestId)
             }
         }
+
+        if(msg.type === "run_output"){
+            const stream = msg.stream || "stdout";
+            const chunk = msg.chunk || "";
+            console.log(`Agent run output ${stream}`,chunk)
+            return;
+        }
     })
 
     ws.on("close", () => {
-        console.log("WS closed")
+        console.log("Agent WS closed")
+        if(agentId){
+            agents.delete(agentId)
+
+            for(const [projectId, mappedAgentId] of projectAgents.entries()){
+                if(mappedAgentId === agentId){
+                    projectAgents.delete(projectId)
+                }
+            }
+        }
     })
 })
 
