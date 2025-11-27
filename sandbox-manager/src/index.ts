@@ -56,6 +56,70 @@ function pickBestAgent(){
     return best;
 }
 
+async function ensureAgentForProject(projectId: string){
+    let agent = getAgentForProject(projectId)
+    if(agent) return agent;
+
+    console.log(`No agent for ${projectId}. Spawning pod...`)
+    await createAgentPod(projectId)
+
+    console.log(`Waiting for agent WS registration...`)
+    agent = await waitForAgent(projectId);
+
+    console.log(`Agent for ${projectId} is now connected.`)
+    return agent;
+}
+
+function waitForAgent(projectId: string, timeOutMs = 15000): Promise<AgentInfo>{
+    return new Promise((resolve, reject) => {
+        const interval = setInterval(() => {
+            const agent = getAgentForProject(projectId)
+            if(agent){
+                clearInterval(interval);
+                resolve(agent)
+            }
+        }, 200)
+
+        setTimeout(() => {
+            clearInterval(interval);
+            reject(new Error("Timeout waiting for agent"))
+        }, timeOutMs)
+    })
+}
+
+async function createAgentPod(projectId:string):Promise<string>{
+    const name = `agent-${projectId.toLowerCase()}`
+    const namespace = "sand"
+
+    const podManifest: k8s.V1Pod ={
+        metadata: {
+            name,
+            namespace,
+            labels: {
+                projectId,
+                agent: "true"
+            }
+        },
+        spec: {
+            restartPolicy: "Never",
+            containers: [
+                {
+                    name: "agent",
+                    image: "js-agent:latest",
+                    env: [
+                        { name: "PROJECT_ID", value: projectId },
+                        { name: "DATA_ROOT", value: "/data" },
+                        { name: "MANAGER_WS_URL", value: "ws://sandbox-manager:4001/agent" }
+                    ],
+                }
+            ]
+        }
+    }
+
+    await client.createNamespacedPod({namespace, body: podManifest})
+    return name
+}
+
 function getAgentForProject(projectId: string){
     const existingAgentId = projectAgents.get(projectId)
     if(existingAgentId){
@@ -292,12 +356,8 @@ app.post("/sandbox/:projectId/run", async(req, res) => {
         return res.status(400).json({error: "cmd must be a non-empty string"});
     }
 
-    const agent = getAgentForProject(projectId)
-    if(!agent) {
-        return res.status(503).json({error: "No agents available"})
-    }
-
     try {
+        const agent = await ensureAgentForProject(projectId)
         const result = await runCommandOnAgent({
             agent,
             projectId,
