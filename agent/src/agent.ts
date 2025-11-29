@@ -436,6 +436,29 @@ function handleMessage(raw: any) {
             enqueue(req)
             break;
         }
+        case "run":{
+            const req: RunRequest = {
+                type: "run",
+                projectId: msg.projectId,
+                requestId: msg.projectId,
+                code: msg.code,
+                timeOutMs: msg.timeOutMs
+            }
+
+            if(!req.requestId || typeof req.cmd!== "string"){
+                send({
+                    type: "run_result",
+                    projectId: msg.projectId,
+                    requestId: msg.projectId,
+                    success: false,
+                    exitCode: null,
+                    error: "Invalid run payload."
+                })
+                return;
+            }
+            enqueue(req)
+            break;
+        }
         case "fs:read": {
             const req: FsReadMessage = {
                 type: "fs:read",
