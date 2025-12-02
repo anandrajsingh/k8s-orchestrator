@@ -30,7 +30,7 @@ const pendingRequests = new Map<string, (result: any)=> void>()
 const streams = new Map<string, Set<express.Response>>();
 
 function genId(){
-    return Math.random().toString(36).slice(2)
+    return crypto.randomUUID()
 }
 
 function streamKey(projectId: string, requestId: string){
@@ -109,7 +109,7 @@ async function createAgentPod(projectId:string):Promise<string>{
                     env: [
                         { name: "PROJECT_ID", value: projectId },
                         { name: "DATA_ROOT", value: "/data" },
-                        { name: "MANAGER_WS_URL", value: "ws://sandbox-manager:4001/agent" }
+                        { name: "MANAGER_WS_URL", value: "ws://sandbox-manager:4001" }
                     ],
                 }
             ]
@@ -188,7 +188,7 @@ async function runCommandOnAgent(params: {
     timeOutMs?:number
 }): Promise<any>{
     const { agent, projectId, cmd, timeOutMs=15000} = params;
-    if(agent.ws.readyState !== agent.ws.OPEN){
+    if(agent.ws.readyState !== WebSocket.OPEN){
         throw new Error("Agent WebSocket is not open")
     }
 
@@ -213,6 +213,7 @@ async function runCommandOnAgent(params: {
                 resolve({
                     type: "run_result",
                     projectId,
+                    requestId,
                     success: false,
                     exitCode: null,
                     error: "Timeout in manager while waiting for run result"
@@ -223,7 +224,7 @@ async function runCommandOnAgent(params: {
     return result
 }
 
-app.get("/sandbox/list", async (req, res) => {
+app.post("/sandbox/list", async (req, res) => {
     const { namespace } = req.body
     const pods = await client.listNamespacedPod({namespace})
     res.json(pods)
@@ -298,31 +299,31 @@ app.post("/sandbox/create-agent", async( req, res) => {
     res.json(pod)
 })
 
-app.post("/sandbox/:name/run-js", async(req, res)=> {
-    const { code, projectId } = req.body;
-    const { name } = req.params;
+// app.post("/sandbox/:name/run-js", async(req, res)=> {
+//     const { code, projectId } = req.body;
+//     const { name } = req.params;
 
-    const ws = agents.get(name)?.ws
-    if(!ws || ws.readyState !== ws.OPEN){
-        return res.status(400).json({error: "Agent not connected"})
-    }
+//     const ws = agents.get(name)?.ws
+//     if(!ws || ws.readyState !== ws.OPEN){
+//         return res.status(400).json({error: "Agent not connected"})
+//     }
 
-    const agent = agents.get(name)!;
-    const effectiveProjectId = projectId || `sandbox-${name}`;
+//     const agent = agents.get(name)!;
+//     const effectiveProjectId = projectId || `sandbox-${name}`;
 
-    try {
-        const result = await runJsOnAgent({
-            agent,
-            projectId: effectiveProjectId,
-            code,
-        })
-        res.json(result)
-    } catch (error:any) {
-        res.status(500).json({error: error.message || "Run failed in manager"})
-    }
-})
+//     try {
+//         const result = await runJsOnAgent({
+//             agent,
+//             projectId: effectiveProjectId,
+//             code,
+//         })
+//         res.json(result)
+//     } catch (error:any) {
+//         res.status(500).json({error: error.message || "Run failed in manager"})
+//     }
+// })
 
-app.post("sandbox/:projectId/run-js", async (req, res) => {
+app.post("/sandbox/:projectId/run-js", async (req, res) => {
     const { projectId } = req.params;
     const { code, timeOutMs } = req.body;
 
@@ -376,11 +377,11 @@ app.post("/sandbox/:projectId/fs/read", async(req, res) => {
 
     const agent = getAgentForProject(projectId)
     if(!agent){
-        return res.json(503).json({error: "No agent available"})
+        return res.status(503).json({error: "No agent available"})
     }
 
     if(agent.ws.readyState !==WebSocket.OPEN){
-        return res.json(500).json({error: "Agent websocket not open"})
+        return res.status(500).json({error: "Agent websocket not open"})
     }
 
     const requestId = genId()
@@ -436,6 +437,7 @@ app.post("/sandbox/:projectId/fs/write", async(req, res) => {
     const payload = {
         type: "fs:write",
         projectId,
+        requestId,
         path,
         data,
         binary
@@ -585,14 +587,18 @@ wss.on("connection", (ws) => {
         if(msg.type === "heartbeat"){
             if(!msg.sandboxId) return;
             const info = agents.get(msg.sandboxId)
-            if(info){
-                info.lastHeartbeat = Date.now()
-                if(typeof msg.activeRuns === "number"){
-                    info.activeRuns = msg.activeRuns;
-                }
-                if(typeof msg.queueLength === "number"){
-                    info.queueLength = msg.queueLength;
-                }
+            if(!info) {
+                console.warn("Heartbeat from unknown or unregistered agent: ", msg.sandboxId)
+                return;
+            }
+
+            info.lastHeartbeat = Date.now()
+
+            if(Number.isFinite(msg.activeRuns)){
+                info.activeRuns = msg.activeRuns;
+            }
+            if(Number.isFinite(msg.queueLength)){
+                info.queueLength = msg.queueLength;
             }
             return;
         }
@@ -647,15 +653,36 @@ wss.on("connection", (ws) => {
 
     ws.on("close", () => {
         console.log("Agent WS closed")
-        if(agentId){
-            agents.delete(agentId)
 
-            for(const [projectId, mappedAgentId] of projectAgents.entries()){
-                if(mappedAgentId === agentId){
-                    projectAgents.delete(projectId)
-                }
+        if(!agentId) return;
+
+        agents.delete(agentId)
+
+        for(const [projectId, mappedAgentId] of projectAgents.entries()){
+            if( mappedAgentId === agentId){
+                projectAgents.delete(projectId)
             }
         }
+
+        for( const [ reqId, resolve] of pendingRequests.entries()){
+            resolve({
+                type: "error",
+                requestId: reqId,
+                error: "Agent disconnected before completing the request."
+            })
+            pendingRequests.delete(reqId)
+        }
+
+        for ( const [key, set] of streams.entries()){
+            for (const res of set){
+                try{
+                    res.end()
+                }catch(_){}
+            }
+            streams.delete(key)
+        }
+
+        console.log(`Cleaned up resources for agent: ${agentId}`)
     })
 })
 
