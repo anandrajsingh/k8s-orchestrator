@@ -29,6 +29,9 @@ const projectAgents = new Map<string, string>();
 const pendingRequests = new Map<string, (result: any)=> void>()
 const streams = new Map<string, Set<express.Response>>();
 
+const DEAD_AGENT_TIMEOUT = 20_000;
+const DEAD_AGENT_SWEEP_INTERVAL = 5_000;
+
 function genId(){
     return crypto.randomUUID()
 }
@@ -222,6 +225,47 @@ async function runCommandOnAgent(params: {
         }, timeOutMs + 1000)
     })
     return result
+}
+
+function startDeadAgentMonitor(){
+    setInterval(() => {
+        const now = Date.now();
+
+        for (const [agentId, info] of agents.entries()){
+            const diff = now - info.lastHeartbeat;
+
+            if(diff > DEAD_AGENT_TIMEOUT){
+                console.warn(`Agent ${agentId} considered dead. No heartbeat for ${diff} ms`)
+
+                agents.delete(agentId)
+
+                for (const [projectId, mapped] of projectAgents.entries()){
+                    if(mapped === agentId){
+                        projectAgents.delete(projectId)
+                    }
+                }
+
+                for (const [reqId, resolve] of pendingRequests.entries()){
+                    resolve({
+                        type: "error",
+                        requestId: reqId,
+                        error: "Agent died before completing the request",
+                    });
+                    pendingRequests.delete(reqId);
+                }
+
+                for (const [key, set] of streams.entries()){
+                    for (const res of set){
+                        try {
+                            res.end()
+                        } catch (_) {}
+                    }
+                    streams.delete(key)
+                }
+                console.log(`cleared resources for dead agent: ${agentId}`)
+            }
+        }
+    }, DEAD_AGENT_SWEEP_INTERVAL)
 }
 
 app.post("/sandbox/list", async (req, res) => {
@@ -685,5 +729,7 @@ wss.on("connection", (ws) => {
         console.log(`Cleaned up resources for agent: ${agentId}`)
     })
 })
+
+startDeadAgentMonitor()
 
 server.listen(4001, () => console.log("Manager running on port 4001"))

@@ -367,7 +367,7 @@ function cancelRun(request: CancelRequest) {
     const key = runKey(projectId, requestId);
     const state = activeRuns.get(key)
     if (!state) {
-        send({ type: "cancel_request", projectId, requestId, success: false, error: "Not found or already finished." })
+        send({ type: "cancel_result", projectId, requestId, success: false, error: "Not found or already finished." })
         return;
     }
 
