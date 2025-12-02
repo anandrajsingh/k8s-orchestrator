@@ -76,15 +76,15 @@ function projectRoot(projectId:string){
 
 function resolvePath(projectId: string, urlPath: string): string {
     const base = projectRoot(projectId);
-    const resolved = path.resolve(base, urlPath)
+    const baseReal = fs.realpathSync(base)
 
-    if (!resolved.startsWith(base)) {
+    const resolved = path.resolve(baseReal, "." + path.sep + urlPath)
+
+    if (!resolved.startsWith(baseReal + path.sep) && resolved !== baseReal) {
         throw new Error("Invalid path (escape attempt).")
     }
 
-    const real = fs.realpathSync(resolved)
-    if (!real.startsWith(base)) throw new Error("Invalid path (symlink escape)")
-    return real;
+    return resolved;
 }
 
 function ensureProjectDirs(projectId: string){
@@ -249,7 +249,7 @@ function startRun(req: RunRequest) {
     const { requestId, projectId, code } = req;
     const key = runKey(projectId, requestId);
 
-    const cwd = path.join(DATA_ROOT, path.basename(projectId));
+    const cwd = projectRoot(projectId);
     const timeOutMs = req.timeOutMs ?? DEFAULT_TIMEOUT_MS;
 
     let command = req.cmd;
@@ -440,8 +440,8 @@ function handleMessage(raw: any) {
             const req: RunRequest = {
                 type: "run",
                 projectId: msg.projectId,
-                requestId: msg.projectId,
-                code: msg.code,
+                requestId: msg.requestId,
+                cmd: msg.cmd,
                 timeOutMs: msg.timeOutMs
             }
 
@@ -449,7 +449,7 @@ function handleMessage(raw: any) {
                 send({
                     type: "run_result",
                     projectId: msg.projectId,
-                    requestId: msg.projectId,
+                    requestId: msg.requestId,
                     success: false,
                     exitCode: null,
                     error: "Invalid run payload."
@@ -464,7 +464,8 @@ function handleMessage(raw: any) {
                 type: "fs:read",
                 projectId: msg.projectId,
                 requestId: msg.requestId,
-                path: msg.path
+                path: msg.path,
+                binary: msg.binary
             }
 
             if (!req.requestId || typeof req.path !== "string") {
@@ -487,7 +488,8 @@ function handleMessage(raw: any) {
                 projectId: msg.projectId,
                 requestId: msg.requestId,
                 path: msg.path,
-                data: msg.data
+                data: msg.data,
+                binary: msg.binary
             }
             if (!req.requestId || typeof req.path !== "string") {
                 send({
