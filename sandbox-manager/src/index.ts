@@ -415,6 +415,48 @@ app.post("/sandbox/:projectId/run", async(req, res) => {
     }
 })
 
+app.post("/sandbox/:projectId/cancel", async(req, res) => {
+    const { projectId } = req.params;
+    const { requestId } = req.body;
+
+    if(!requestId){
+        return res.status(400).json({error: "Request ID not provided"})
+    }
+    const agent = getAgentForProject(projectId);
+    if(!agent){
+        return res.status(503).json({error: "No agent available"})
+    }
+    if(agent.ws.readyState !== WebSocket.OPEN){
+        return res.status(500).json({error: "Agent Websocket not open"})
+    }
+
+    const payload = {
+        type: "cancel_run",
+        projectId,
+        requestId
+    }
+
+    agent.ws.send(JSON.stringify(payload))
+
+    const result = await new Promise((resolve) => {
+        pendingRequests.set(requestId, resolve)
+
+        setTimeout(() => {
+            if(pendingRequests.has(requestId)){
+                pendingRequests.delete(requestId);
+                resolve({
+                    type: "cancel_result",
+                    projectId,
+                    requestId,
+                    success: false,
+                    error: "Timeout waiting for cancel run response"
+                })
+            }
+        }, 8000)
+    })
+    res.json(result)
+})
+
 app.post("/sandbox/:projectId/fs/read", async(req, res) => {
     const {projectId} = req.params;
     const { path, binary } = req.body;
@@ -661,6 +703,22 @@ wss.on("connection", (ws) => {
                     streams.delete(key)
             }
             return
+        }
+
+        if(msg.type === "cancel_result"){
+            const resolve = pendingRequests.get(msg.requestId);
+            if(resolve){
+                resolve(msg);
+                pendingRequests.delete(msg.requestId)
+            }
+
+            const key = streamKey(msg.projectId, msg.requestId)
+            const set = streams.get(key);
+            if(set){
+                for (const res of set) res.end();
+                streams.delete(key)
+            }
+            return;
         }
 
         if(msg.type === "fs:read:ok" || msg.type === "fs:read:error"){
