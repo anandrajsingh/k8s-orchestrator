@@ -3,6 +3,7 @@ import * as k8s from "@kubernetes/client-node"
 import { Writable } from "stream";
 import http from "http"
 import { WebSocketServer, WebSocket } from "ws"
+import crypto from "crypto"
 
 const kc = new k8s.KubeConfig()
 kc.loadFromDefault();
@@ -26,7 +27,7 @@ type AgentInfo = {
 
 const agents = new Map<string, AgentInfo>();
 const projectAgents = new Map<string, string>();
-const pendingRequests = new Map<string, (result: any)=> void>()
+const pendingRequests = new Map<string, { resolve: (result: any) => void; agentId: string }>()
 const streams = new Map<string, Set<express.Response>>();
 
 const DEAD_AGENT_TIMEOUT = 20_000;
@@ -164,7 +165,7 @@ async function runJsOnAgent(params: {
     agent.ws.send(JSON.stringify(payload))
 
     const result = await new Promise((resolve) => {
-        pendingRequests.set(requestId, resolve);
+        pendingRequests.set(requestId, {resolve, agentId: agent.id});
 
         setTimeout(() => {
             if(pendingRequests.has(requestId)){
@@ -208,7 +209,7 @@ async function runCommandOnAgent(params: {
     agent.ws.send(JSON.stringify(payload));
 
     const result = await new Promise((resolve) => {
-        pendingRequests.set(requestId, resolve);
+        pendingRequests.set(requestId, {resolve, agentId: agent.id});
 
         setTimeout(() => {
             if(pendingRequests.has(requestId)){
@@ -245,8 +246,9 @@ function startDeadAgentMonitor(){
                     }
                 }
 
-                for (const [reqId, resolve] of pendingRequests.entries()){
-                    resolve({
+                for (const [reqId, entry] of pendingRequests.entries()){
+                    if(entry.agentId !== agentId ) continue;
+                    entry.resolve({
                         type: "error",
                         requestId: reqId,
                         error: "Agent died before completing the request",
@@ -439,7 +441,7 @@ app.post("/sandbox/:projectId/cancel", async(req, res) => {
     agent.ws.send(JSON.stringify(payload))
 
     const result = await new Promise((resolve) => {
-        pendingRequests.set(requestId, resolve)
+        pendingRequests.set(requestId, {resolve, agentId: agent.id})
 
         setTimeout(() => {
             if(pendingRequests.has(requestId)){
@@ -484,7 +486,7 @@ app.post("/sandbox/:projectId/fs/read", async(req, res) => {
 
     try {
         const result = await new Promise((resolve) => {
-            pendingRequests.set(requestId, resolve)
+            pendingRequests.set(requestId, {resolve, agentId: agent.id})
 
             setTimeout(() => {
                 if(pendingRequests.has(requestId)){
@@ -533,7 +535,7 @@ app.post("/sandbox/:projectId/fs/write", async(req, res) => {
 
     try {
         const result = await new Promise((resolve) => {
-            pendingRequests.set(requestId,resolve)
+            pendingRequests.set(requestId,{resolve, agentId: agent.id})
 
             setTimeout(() => {
                 if(pendingRequests.has(requestId)){
@@ -675,6 +677,7 @@ wss.on("connection", (ws) => {
             const info = agents.get(msg.sandboxId)
             if(!info) {
                 console.warn("Heartbeat from unknown or unregistered agent: ", msg.sandboxId)
+                ws.close()
                 return;
             }
 
@@ -690,9 +693,9 @@ wss.on("connection", (ws) => {
         }
 
         if(msg.type === "run_result"){
-            const resolve = pendingRequests.get(msg.requestId);
-            if(resolve){
-                resolve(msg)
+            const entry = pendingRequests.get(msg.requestId);
+            if(entry){
+                entry.resolve(msg)
                 pendingRequests.delete(msg.requestId)
             }
 
@@ -706,9 +709,9 @@ wss.on("connection", (ws) => {
         }
 
         if(msg.type === "cancel_result"){
-            const resolve = pendingRequests.get(msg.requestId);
-            if(resolve){
-                resolve(msg);
+            const entry = pendingRequests.get(msg.requestId);
+            if(entry){
+                entry.resolve(msg);
                 pendingRequests.delete(msg.requestId)
             }
 
@@ -722,18 +725,18 @@ wss.on("connection", (ws) => {
         }
 
         if(msg.type === "fs:read:ok" || msg.type === "fs:read:error"){
-            const resolve = pendingRequests.get(msg.requestId);
-            if(resolve){
-                resolve(msg)
+            const entry = pendingRequests.get(msg.requestId);
+            if(entry){
+                entry.resolve(msg)
                 pendingRequests.delete(msg.requestId)
             }
             return;
         }
 
         if(msg.type === "fs:write:ok" || msg.type === "fs:write:error"){
-            const resolve = pendingRequests.get(msg.requestId)
-            if(resolve){
-                resolve(msg)
+            const entry = pendingRequests.get(msg.requestId)
+            if(entry){
+                entry.resolve(msg)
                 pendingRequests.delete(msg.requestId)
             }
             return;
@@ -766,8 +769,10 @@ wss.on("connection", (ws) => {
             }
         }
 
-        for( const [ reqId, resolve] of pendingRequests.entries()){
-            resolve({
+        for( const [ reqId, entry] of pendingRequests.entries()){
+            if(entry.agentId !== agentId) continue;
+
+            entry.resolve({
                 type: "error",
                 requestId: reqId,
                 error: "Agent disconnected before completing the request."
