@@ -1,13 +1,29 @@
-From node:18-slim
+From node:20-slim AS builder
 
 WORKDIR /app
 
 COPY package*.json ./
 
+RUN npm install
+
+COPY src ./src
+COPY tsconfig.json .
+
+RUN npm run build
+
+#======================
+
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY package*.json ./
 RUN npm install --omit=dev
 
-COPY agent.js .
+COPY --from=builder /app/dist ./dist
 
-ENV NODE_ENV=production
+RUN mkdir -p /data
 
-CMD ["node", "agent.js"]
+ENV DATA_ROOT=/data
+
+CMD ["node", "dist/agent.js"]
