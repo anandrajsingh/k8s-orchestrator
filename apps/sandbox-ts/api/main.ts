@@ -1,10 +1,19 @@
 import http from "http";
+import { handleExec } from "./execApi";
+import { ExecService } from "../service/execService";
+import { ProcessExecutor } from "../executor/processExecutor";
+
+const executor = new ProcessExecutor()
+const service = new ExecService(executor);
 
 const server = http.createServer((req,res) => {
     if(req.method === "POST" && req.url === "/exec"){
-        res.end(JSON.stringify({res: "exec url"}))
+        handleExec(req, res, service)
+        return
     }
-    return
+
+    res.statusCode = 404;
+    res.end("Not found")
 })
 
 server.listen(3000, () => {
