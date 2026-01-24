@@ -1,11 +1,37 @@
 import { ExecRequest, ExecResponse } from "../utils/types";
-import { spawn } from "child_process";
+import { ChildProcess, spawn } from "child_process";
 
-export class ProcessExecutor{
-    async exec(req:ExecRequest): Promise<ExecResponse>{
+export interface StartedProcess {
+    process: ChildProcess;
+    stdout: () => string;
+    stderr: () => string;
+}
+
+export class ProcessExecutor {
+
+    start(req: ExecRequest): StartedProcess {
+        const child = spawn(req.command, req.args, {
+            env: { ...process.env, ...req.env },
+            cwd: req.cwd,
+        });
+
+        let stdout = "";
+        let stderr = "";
+
+        child.stdout?.on("data", (d) => (stdout += d.toString()));
+        child.stderr?.on("data", (d) => (stderr += d.toString()));
+
+        return {
+            process: child,
+            stdout: () => stdout,
+            stderr: () => stderr,
+        };
+    }
+
+    async exec(req: ExecRequest): Promise<ExecResponse> {
         return new Promise((resolve) => {
             const child = spawn(req.command, req.args, {
-                env: { ...process.env, ...req.env},
+                env: { ...process.env, ...req.env },
                 cwd: req.cwd
             })
 
@@ -13,11 +39,11 @@ export class ProcessExecutor{
             let stderr = "";
 
             child.stdout.on("data", (data) => {
-                stdout = data.toString()
+                stdout += data.toString()
             })
 
             child.stderr.on("data", (data) => {
-                stderr = data.toString()
+                stderr += data.toString()
             })
 
             child.on("error", (err) => {
@@ -30,7 +56,7 @@ export class ProcessExecutor{
             })
 
             child.on("close", (code) => {
-                resolve ({
+                resolve({
                     stdout,
                     stderr,
                     exitCode: code ?? -1
