@@ -2,12 +2,15 @@ package process
 
 import (
 	"errors"
+	"io"
 	"os/exec"
 	"sync"
+	"syscall"
 
-	"github.com/google/uuid"
 	"sandbox-go/internal/executor"
 	"sandbox-go/pkg/utils"
+
+	"github.com/google/uuid"
 )
 
 type Manager struct {
@@ -16,60 +19,78 @@ type Manager struct {
 	mu        sync.Mutex
 }
 
-func NewManager(exec *executor.ProcessExecutor) *Manager{
+func NewManager(exec *executor.ProcessExecutor) *Manager {
 	return &Manager{
-		executor: exec,
+		executor:  exec,
 		processes: make(map[string]*Handle),
 	}
 }
 
-
-func (m *Manager) Start(req utils.ExecRequest)(string, error){
+func (m *Manager) Start(req utils.ExecRequest) (string, error) {
 	cmd, stdout, stderr, err := m.executor.Start(req)
-	if err != nil{
+	if err != nil {
 		return "", err
 	}
 
 	id := uuid.NewString()
 
 	handle := &Handle{
-		ID: id,
-		Cmd: cmd,
-		State: StateRunning,
-		Stdout: stdout,
-		Stderr: stderr,
+		ID:     id,
+		Cmd:    cmd,
+		State:  StateRunning,
+		Stdout: NewBroadcaster(),
+		Stderr: NewBroadcaster(),
 	}
 
 	m.mu.Lock()
 	m.processes[id] = handle
 	m.mu.Unlock()
 
+	go streamPipe(stdout, handle.Stdout)
+	go streamPipe(stderr, handle.Stderr)
+
 	go m.wait(handle)
 
 	return id, nil
 }
 
-func(m *Manager) wait(h *Handle){
+func streamPipe(r io.ReadCloser, b *Broadcaster) {
+	buf := make([]byte, 4096)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			b.Publish(buf[:n])
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (m *Manager) wait(h *Handle) {
 	err := h.Cmd.Wait()
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if err != nil{
-		if exitErr, ok := err.(*exec.ExitError); ok{
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
 			h.ExitCode = exitErr.ExitCode()
 			h.State = StateExited
-		}else{
+		} else {
 			h.State = StateFailed
 			h.Err = err
 		}
-		return
+	} else {
+		h.ExitCode = 0
+		h.State = StateExited
 	}
-	h.ExitCode = 0
-	h.State = StateExited
+
+	h.Stdout.Close()
+	h.Stderr.Close()
 }
 
-func (m *Manager) Status(id string) (*Handle, error){
+func (m *Manager) Status(id string) (*Handle, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -80,7 +101,7 @@ func (m *Manager) Status(id string) (*Handle, error){
 	return h, nil
 }
 
-func (m *Manager) Kill(id string) error{
+func (m *Manager) Kill(id string) error {
 	m.mu.Lock()
 	h, ok := m.processes[id]
 	m.mu.Unlock()
@@ -91,8 +112,12 @@ func (m *Manager) Kill(id string) error{
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.State != StateRunning{
+	if h.State != StateRunning {
 		return errors.New("process not running")
 	}
-	return  h.Cmd.Process.Kill()
+	err := syscall.Kill(-h.Cmd.Process.Pid, syscall.SIGTERM)
+	if err == syscall.ESRCH {
+		return nil
+	}
+	return err
 }

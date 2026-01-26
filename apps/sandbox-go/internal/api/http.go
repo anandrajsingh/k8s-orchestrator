@@ -62,13 +62,52 @@ func GetProcess(w http.ResponseWriter, r *http.Request, manager *process.Manager
 		"id":       h.ID,
 		"state":    h.State,
 		"exitCode": h.ExitCode,
-		"stdout":   h.Stdout.String(),
-		"stderr":   h.Stderr.String(),
 		"error":    h.Err,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func StreamProces(w http.ResponseWriter, r *http.Request, manager *process.Manager, id string) {
+	h, err := manager.Status(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+
+	stdoutCh, unsubOut := h.Stdout.Subscribe()
+	stderrCh, unsubErr := h.Stderr.Subscribe()
+	defer unsubOut()
+	defer unsubErr()
+
+	flusher, _ := w.(http.Flusher)
+
+	for {
+		select{
+		case data, ok := <-stdoutCh:
+			if !ok {
+				w.Write([]byte{})
+				return
+			}
+			w.Write(data)
+			flusher.Flush()
+
+		case data, ok := <-stderrCh:
+			if !ok {
+				w.Write([]byte{})
+				return
+			}
+			w.Write(data)
+			flusher.Flush()
+
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 func DeleteProcess(

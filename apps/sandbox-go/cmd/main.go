@@ -38,6 +38,11 @@ func main() {
 			return
 		}
 
+		if r.Method == http.MethodGet && len(parts) == 3 && parts[2] == "stream"{
+			api.StreamProces(w,r,manager,parts[1])
+			return
+		}
+
 		http.NotFound(w, r)
 	})
 

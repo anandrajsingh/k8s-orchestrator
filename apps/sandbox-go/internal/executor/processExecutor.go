@@ -2,8 +2,10 @@ package executor
 
 import (
 	"bytes"
+	"io"
 	"os/exec"
 	"sandbox-go/pkg/utils"
+	"syscall"
 )
 
 type ProcessExecutor struct{}
@@ -56,30 +58,37 @@ func (e *ProcessExecutor) Exec(req utils.ExecRequest) utils.ExecResponse{
 	}
 }
 
-func (e *ProcessExecutor) Start(req utils.ExecRequest) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer, error){
+func (e *ProcessExecutor) Start(req utils.ExecRequest) (*exec.Cmd, io.ReadCloser, io.ReadCloser, error){
 	cmd := exec.Command(req.Command, req.Args...)
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
 
 	if req.Cwd != ""{
 		cmd.Dir = req.Cwd
 	}
 
+	if len(req.Env) > 0{
 	env := make([]string, 0, len(req.Env))
 	for k,v := range req.Env {
 		env = append(env, k+"="+v)
 	}
-	if len(env) > 0{
-		cmd.Env = append(cmd.Env, env...)
+	cmd.Env = append(cmd.Env, env...)
 	}
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe(); 
+	if err != nil{
+		return nil,nil,nil, err
+	}
+	stderr, err := cmd.StderrPipe();
+	if err != nil{
+		return nil,nil,nil, err
+	}
 	
 	if err := cmd.Start(); err != nil{
 		return nil,nil,nil,err
 	}
 
-	return cmd, &stdout, &stderr, nil
+	return cmd, stdout, stderr, nil
 }
