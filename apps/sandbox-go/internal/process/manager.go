@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"sandbox-go/executor"
-	"sandbox-go/utils"
+	"sandbox-go/internal/executor"
+	"sandbox-go/pkg/utils"
 )
 
 type Manager struct {

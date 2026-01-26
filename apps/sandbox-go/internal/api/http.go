@@ -3,9 +3,9 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"sandbox-go/process"
-	"sandbox-go/service"
-	"sandbox-go/utils"
+	"sandbox-go/internal/process"
+	"sandbox-go/internal/service"
+	"sandbox-go/pkg/utils"
 )
 
 func HandleExec(svc *service.ExecService) http.HandlerFunc {

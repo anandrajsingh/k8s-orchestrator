@@ -3,7 +3,7 @@ package executor
 import (
 	"bytes"
 	"os/exec"
-	"sandbox-go/utils"
+	"sandbox-go/pkg/utils"
 )
 
 type ProcessExecutor struct{}

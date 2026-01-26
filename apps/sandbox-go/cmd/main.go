@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"strings"
 
-	"sandbox-go/api"
-	"sandbox-go/executor"
+	"sandbox-go/internal/api"
+	"sandbox-go/internal/executor"
 
-	"sandbox-go/process"
-	"sandbox-go/service"
+	"sandbox-go/internal/process"
+	"sandbox-go/internal/service"
 )
 
 func main() {
