@@ -2,6 +2,7 @@ import {randomUUID} from "crypto"
 import { ProcessExecutor } from "../executor/processExecutor"
 import { ProcessHandle } from "./handle";
 import { ExecRequest } from "../utils/types";
+import { Broadcaster } from "./broadcaster";
 
 export class ProcessManager {
     private executor : ProcessExecutor;
@@ -13,27 +14,40 @@ export class ProcessManager {
     }
 
     start(req: ExecRequest):string {
-        const { process, stdout, stderr } = this.executor.start(req);
+        const { process } = this.executor.start(req);
         const id = randomUUID();
+
+        const stdoutBroadcaster = new Broadcaster<Buffer>();
+        const stderrBroadcaster = new Broadcaster<Buffer>();
+
+        process.stdout?.on("data", (chunk:Buffer) => {
+            stdoutBroadcaster.publish(chunk)
+        })
+
+        process.stderr?.on("data", (chunk:Buffer) => {
+            stderrBroadcaster.publish(chunk)
+        })
 
         const handle: ProcessHandle = {
             id,
             process,
             state: "running",
-            stdout: "",
-            stderr: ""
+            stdout: stdoutBroadcaster,
+            stderr: stderrBroadcaster
         }
 
         this.processes.set(id,handle);
 
         process.on("close", (code) => {
-            handle.stdout = stdout()
-            handle.stderr = stderr()
+            stdoutBroadcaster.close()
+            stderrBroadcaster.close()
             handle.exitCode = code ?? -1
             handle.state = "exited"
         })
 
         process.on("error", (err) => {
+            stdoutBroadcaster.close()
+            stderrBroadcaster.close()
             handle.error = err.message;
             handle.state = "failed"
         })

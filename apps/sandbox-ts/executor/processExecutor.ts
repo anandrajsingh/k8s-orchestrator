@@ -3,8 +3,6 @@ import { ChildProcess, spawn } from "child_process";
 
 export interface StartedProcess {
     process: ChildProcess;
-    stdout: () => string;
-    stderr: () => string;
 }
 
 export class ProcessExecutor {
@@ -13,18 +11,11 @@ export class ProcessExecutor {
         const child = spawn(req.command, req.args, {
             env: { ...process.env, ...req.env },
             cwd: req.cwd,
+            stdio: ["ignore", "pipe", "pipe"]
         });
-
-        let stdout = "";
-        let stderr = "";
-
-        child.stdout?.on("data", (d) => (stdout += d.toString()));
-        child.stderr?.on("data", (d) => (stderr += d.toString()));
 
         return {
             process: child,
-            stdout: () => stdout,
-            stderr: () => stderr,
         };
     }
 

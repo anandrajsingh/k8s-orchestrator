@@ -78,8 +78,6 @@ export async function getProcess(req: IncomingMessage, res: ServerResponse, mana
         id: handle.id,
         state: handle.state,
         exitCode: handle.exitCode,
-        stdout: handle.stdout,
-        stderr: handle.stderr,
         error: handle.error,
     };
 
@@ -100,4 +98,42 @@ export async function deleteProcess(req: IncomingMessage, res: ServerResponse, m
 
     res.statusCode = 200;
     res.end(JSON.stringify({ message: "Process killed" }))
+}
+
+export async function streamProcess(req: IncomingMessage, res: ServerResponse, manager: ProcessManager, id: string) {
+    const handle = manager.get(id)
+    if (!handle) {
+        res.statusCode = 404;
+        res.end("Process Not found")
+        return
+    }
+
+    res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Transfer-Encoding": "chunked"
+    });
+
+    const unsubStdout = handle.stdout.subscribe((chunk) => {
+        res.write(chunk)
+    })
+    const unsubStderr = handle.stderr.subscribe((chunk) => {
+        res.write(chunk)
+    })
+
+    const onExit = () => {
+        res.end()
+        cleanup()
+    }
+
+    const cleanup = () => {
+        unsubStdout();
+        unsubStderr();
+        handle.process.off("close", onExit);
+        handle.process.off("error", onExit);
+    };
+
+    handle.process.once("close", onExit);
+    handle.process.once("error", onExit);
+
+    req.on("close", cleanup)
 }
