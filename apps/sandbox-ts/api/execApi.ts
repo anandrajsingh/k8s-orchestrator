@@ -97,7 +97,7 @@ export async function deleteProcess(req: IncomingMessage, res: ServerResponse, m
     }
 
     res.statusCode = 200;
-    res.end(JSON.stringify({ message: "Process killed" }))
+    res.end(JSON.stringify({ message: "Kill Requested" }))
 }
 
 export async function streamProcess(req: IncomingMessage, res: ServerResponse, manager: ProcessManager, id: string) {
@@ -120,22 +120,16 @@ export async function streamProcess(req: IncomingMessage, res: ServerResponse, m
         res.write(chunk)
     })
 
-    const onExit = () => {
-        res.end()
-        cleanup()
-    }
-
     const cleanup = () => {
         unsubStdout();
         unsubStderr();
-        handle.process.off("close", onExit);
-        handle.process.off("error", onExit);
+        res.end()
     };
 
-    handle.process.once("close", onExit);
-    handle.process.once("error", onExit);
-
     req.on("close", cleanup)
+
+    handle.stdout.onClose(cleanup);
+    handle.stderr.onClose(cleanup);
 }
 
 export async function writeInput(req: IncomingMessage, res: ServerResponse, manager: ProcessManager, id: string){

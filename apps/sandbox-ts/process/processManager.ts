@@ -1,6 +1,6 @@
 import {randomUUID} from "crypto"
 import { ProcessExecutor } from "../executor/processExecutor"
-import { ProcessHandle } from "./handle";
+import { ProcessHandle, ProcessState } from "./handle";
 import { ExecRequest } from "../utils/types";
 import { Broadcaster } from "./broadcaster";
 
@@ -31,20 +31,22 @@ export class ProcessManager {
         const handle: ProcessHandle = {
             id,
             process,
-            state: "running",
+            state: ProcessState.RUNNING,
             stdin: process.stdin!,
             stdout: stdoutBroadcaster,
-            stderr: stderrBroadcaster
+            stderr: stderrBroadcaster,
+
+            cleanup: () => {
+                process.stdin?.destroy()
+                stdoutBroadcaster.close()
+                stderrBroadcaster.close()
+            }
         }
 
         this.processes.set(id,handle);
 
         process.on("close", (code) => {
-            if(handle.state !== "running") return
-            stdoutBroadcaster.close()
-            stderrBroadcaster.close()
-            handle.exitCode = code ?? -1
-            handle.state = "exited"
+            this.markExit(id, code ?? -1)
         })
 
         process.on("error", (err) => {
@@ -52,10 +54,40 @@ export class ProcessManager {
             stdoutBroadcaster.close()
             stderrBroadcaster.close()
             handle.error = err.message;
-            handle.state = "failed"
+            handle.state = ProcessState.EXITED
         })
 
         return id
+    }
+
+    private markExit(id:string, code:number){
+        const h = this.processes.get(id)
+        if(!h) return;
+
+        if(h.state === ProcessState.EXITED || h.state === ProcessState.KILLED){
+            return
+        }
+
+        h.state = ProcessState.EXITED
+        h.exitCode = code
+
+        h.cleanup()
+        this.processes.delete(id)
+    }
+
+    private markError(id:string, message: string){
+        const h = this.processes.get(id)
+        if(!h) return
+
+        if(h.state === ProcessState.EXITED || h.state === ProcessState.KILLED){
+            return
+        }
+
+        h.state = ProcessState.EXITED
+        h.error = message
+
+        h.cleanup()
+        this.processes.delete(id)
     }
 
     get(id:string): ProcessHandle | undefined{
@@ -83,9 +115,16 @@ export class ProcessManager {
         const h = this.processes.get(id);
         if(!h) throw new Error("Process Not Found")
 
-        if (h.state !== "running") throw new Error("Process is not running")
+        if (h.state === ProcessState.EXITED || h.state === ProcessState.KILLED) throw new Error("Process is not running")
 
+        h.state = ProcessState.KILLED
         const signal = force ? "SIGKILL":"SIGTERM"
-        h.process.kill(signal)
+        try {
+            h.process.kill(signal)
+        } catch (error) {
+        }
+
+        h.cleanup()
+        this.processes.delete(id)
     }
 }
