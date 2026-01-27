@@ -58,7 +58,7 @@ func (e *ProcessExecutor) Exec(req utils.ExecRequest) utils.ExecResponse{
 	}
 }
 
-func (e *ProcessExecutor) Start(req utils.ExecRequest) (*exec.Cmd, io.ReadCloser, io.ReadCloser, error){
+func (e *ProcessExecutor) Start(req utils.ExecRequest) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error){
 	cmd := exec.Command(req.Command, req.Args...)
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -77,18 +77,23 @@ func (e *ProcessExecutor) Start(req utils.ExecRequest) (*exec.Cmd, io.ReadCloser
 	cmd.Env = append(cmd.Env, env...)
 	}
 
+	stdin, err := cmd.StdinPipe();
+	if err != nil{
+		return nil, nil, nil, nil, err
+	}	
+
 	stdout, err := cmd.StdoutPipe(); 
 	if err != nil{
-		return nil,nil,nil, err
+		return nil,nil,nil,nil, err
 	}
 	stderr, err := cmd.StderrPipe();
 	if err != nil{
-		return nil,nil,nil, err
+		return nil,nil,nil,nil, err
 	}
 	
 	if err := cmd.Start(); err != nil{
-		return nil,nil,nil,err
+		return nil,nil,nil,nil,err
 	}
 
-	return cmd, stdout, stderr, nil
+	return cmd,stdin, stdout, stderr, nil
 }

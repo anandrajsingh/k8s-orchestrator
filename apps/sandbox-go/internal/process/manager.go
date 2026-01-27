@@ -27,7 +27,7 @@ func NewManager(exec *executor.ProcessExecutor) *Manager {
 }
 
 func (m *Manager) Start(req utils.ExecRequest) (string, error) {
-	cmd, stdout, stderr, err := m.executor.Start(req)
+	cmd, stdin, stdout, stderr, err := m.executor.Start(req)
 	if err != nil {
 		return "", err
 	}
@@ -38,6 +38,7 @@ func (m *Manager) Start(req utils.ExecRequest) (string, error) {
 		ID:     id,
 		Cmd:    cmd,
 		State:  StateRunning,
+		Stdin:  stdin,
 		Stdout: NewBroadcaster(),
 		Stderr: NewBroadcaster(),
 	}
@@ -73,6 +74,10 @@ func (m *Manager) wait(h *Handle) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	if h.Stdin != nil{
+		h.Stdin.Close()
+	}
+
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			h.ExitCode = exitErr.ExitCode()
@@ -101,7 +106,30 @@ func (m *Manager) Status(id string) (*Handle, error) {
 	return h, nil
 }
 
-func (m *Manager) Kill(id string) error {
+func (m *Manager) WriteInput(id string, data []byte) error{
+	m.mu.Lock()
+	h, ok := m.processes[id]
+	m.mu.Unlock()
+
+	if !ok {
+		return errors.New("process not found")
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.State != StateRunning{
+		return errors.New("process not running")
+	}
+
+	if h.Stdin == nil {
+		return errors.New("stdin not available")
+	}
+	_, err := h.Stdin.Write(data)
+	return err
+}
+
+func (m *Manager) Kill(id string, force bool) error {
 	m.mu.Lock()
 	h, ok := m.processes[id]
 	m.mu.Unlock()
@@ -115,7 +143,11 @@ func (m *Manager) Kill(id string) error {
 	if h.State != StateRunning {
 		return errors.New("process not running")
 	}
-	err := syscall.Kill(-h.Cmd.Process.Pid, syscall.SIGTERM)
+	sig := syscall.SIGTERM
+	if force{
+		sig = syscall.SIGKILL
+	}
+	err := syscall.Kill(-h.Cmd.Process.Pid, sig)
 	if err == syscall.ESRCH {
 		return nil
 	}

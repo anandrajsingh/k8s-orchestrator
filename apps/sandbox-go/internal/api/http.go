@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"sandbox-go/internal/process"
 	"sandbox-go/internal/service"
@@ -77,6 +78,8 @@ func StreamProces(w http.ResponseWriter, r *http.Request, manager *process.Manag
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Transfer-Encoding", "chunked")
+	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 
 	stdoutCh, unsubOut := h.Stdout.Subscribe()
@@ -110,13 +113,29 @@ func StreamProces(w http.ResponseWriter, r *http.Request, manager *process.Manag
 	}
 }
 
+func WriteInput(w http.ResponseWriter, r *http.Request, manager *process.Manager, id string){
+	body, err := io.ReadAll(r.Body)
+	if err != nil{
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := manager.WriteInput(id, body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func DeleteProcess(
 	w http.ResponseWriter,
 	r *http.Request,
 	manager *process.Manager,
 	id string,
+	force bool,
 ) {
-	if err := manager.Kill(id); err != nil {
+	if err := manager.Kill(id, force); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

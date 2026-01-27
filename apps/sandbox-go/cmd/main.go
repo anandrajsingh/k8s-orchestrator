@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"sandbox-go/internal/api"
@@ -34,12 +35,21 @@ func main() {
 		}
 
 		if r.Method == http.MethodPost && len(parts) == 3 && parts[2] == "kill" {
-			api.DeleteProcess(w, r, manager, parts[1])
+			force := false
+			if v := r.URL.Query().Get("force"); v!=""{
+				force, _ = strconv.ParseBool(v)
+			}
+			api.DeleteProcess(w, r, manager, parts[1], force)
 			return
 		}
 
 		if r.Method == http.MethodGet && len(parts) == 3 && parts[2] == "stream"{
 			api.StreamProces(w,r,manager,parts[1])
+			return
+		}
+
+		if r.Method == http.MethodPost && len(parts) == 3 && parts[2] == "input"{
+			api.WriteInput(w, r, manager, parts[1])
 			return
 		}
 
