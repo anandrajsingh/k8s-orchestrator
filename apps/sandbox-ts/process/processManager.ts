@@ -32,6 +32,7 @@ export class ProcessManager {
             id,
             process,
             state: "running",
+            stdin: process.stdin!,
             stdout: stdoutBroadcaster,
             stderr: stderrBroadcaster
         }
@@ -39,6 +40,7 @@ export class ProcessManager {
         this.processes.set(id,handle);
 
         process.on("close", (code) => {
+            if(handle.state !== "running") return
             stdoutBroadcaster.close()
             stderrBroadcaster.close()
             handle.exitCode = code ?? -1
@@ -46,6 +48,7 @@ export class ProcessManager {
         })
 
         process.on("error", (err) => {
+            if(handle.state !== "running") return
             stdoutBroadcaster.close()
             stderrBroadcaster.close()
             handle.error = err.message;
@@ -57,6 +60,23 @@ export class ProcessManager {
 
     get(id:string): ProcessHandle | undefined{
         return this.processes.get(id)
+    }
+
+    writeInput(id:string, data: Buffer | string): void{
+        const h = this.processes.get(id);
+        if(!h) throw new Error("Process Not Found")
+
+        if(h.state !== "running"){
+            throw new Error("Process Not in running state.")
+        }
+
+        if(h.stdin.destroyed){
+            throw new Error("Stdin is closed.")
+        }
+        const ok = h.stdin.write(data)
+        if(!ok){
+            console.warn("stdin backpressure")
+        }
     }
 
     kill(id:string): void{

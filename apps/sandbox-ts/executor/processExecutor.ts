@@ -11,7 +11,7 @@ export class ProcessExecutor {
         const child = spawn(req.command, req.args, {
             env: { ...process.env, ...req.env },
             cwd: req.cwd,
-            stdio: ["ignore", "pipe", "pipe"]
+            stdio: ["pipe", "pipe", "pipe"]
         });
 
         return {

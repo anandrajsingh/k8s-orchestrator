@@ -137,3 +137,21 @@ export async function streamProcess(req: IncomingMessage, res: ServerResponse, m
 
     req.on("close", cleanup)
 }
+
+export async function writeInput(req: IncomingMessage, res: ServerResponse, manager: ProcessManager, id: string){
+    const chunks:Buffer[] = []
+    req.on("data", (chunk) => {
+        chunks.push(chunk)
+    })
+    req.on("end", () => {
+        try {
+            const data = Buffer.concat(chunks)
+            manager.writeInput(id, data);
+            res.statusCode = 204;
+            res.end()
+        } catch (err:any) {
+            res.statusCode = 400
+            res.end(err.message)
+        }
+    })
+}

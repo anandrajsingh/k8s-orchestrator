@@ -1,5 +1,5 @@
 import http from "http";
-import { deleteProcess, getProcess, handleExec, handleProcessStart, streamProcess } from "./execApi";
+import { deleteProcess, getProcess, handleExec, handleProcessStart, streamProcess, writeInput } from "./execApi";
 import { ExecService } from "../service/execService";
 import { ProcessExecutor } from "../executor/processExecutor";
 import { ProcessManager } from "../process/processManager";
@@ -55,6 +55,18 @@ const server = http.createServer((req,res) => {
         if(!id) return;
 
         streamProcess(req, res, manager, id)
+        return;
+    }
+
+    if(req.method === "POST" &&
+        parts.length === 3 &&
+        parts[0] === "exec" &&
+        parts[2] === "input"
+    ){
+        const id = parts[1]
+        if(!id) return;
+
+        writeInput(req, res, manager, id)
         return;
     }
     res.statusCode = 404;
