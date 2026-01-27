@@ -71,25 +71,39 @@ func streamPipe(r io.ReadCloser, b *Broadcaster) {
 func (m *Manager) wait(h *Handle) {
 	err := h.Cmd.Wait()
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.Stdin != nil{
-		h.Stdin.Close()
-	}
+	code := 0
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			h.ExitCode = exitErr.ExitCode()
-			h.State = StateExited
-		} else {
-			h.State = StateFailed
-			h.Err = err
+			code = exitErr.ExitCode()
 		}
-	} else {
-		h.ExitCode = 0
-		h.State = StateExited
 	}
+
+	m.markExited(h.ID, code, err)
+}
+
+func (m *Manager) markExited(id string, code int, err error) {
+	m.mu.Lock()
+	h, ok := m.processes[id]
+	if !ok {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.processes, id)
+	m.mu.Unlock()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.Stdin != nil {
+		h.Stdin.Close()
+	}
+
+	h.ExitCode = code
+	if err != nil {
+		h.Err = err
+	}
+	h.State = StateExited
 
 	h.Stdout.Close()
 	h.Stderr.Close()
@@ -106,7 +120,7 @@ func (m *Manager) Status(id string) (*Handle, error) {
 	return h, nil
 }
 
-func (m *Manager) WriteInput(id string, data []byte) error{
+func (m *Manager) WriteInput(id string, data []byte) error {
 	m.mu.Lock()
 	h, ok := m.processes[id]
 	m.mu.Unlock()
@@ -118,7 +132,7 @@ func (m *Manager) WriteInput(id string, data []byte) error{
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.State != StateRunning{
+	if h.State != StateRunning {
 		return errors.New("process not running")
 	}
 
@@ -138,18 +152,17 @@ func (m *Manager) Kill(id string, force bool) error {
 		return errors.New("process not found")
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	if h.State != StateRunning {
-		return errors.New("process not running")
-	}
-	sig := syscall.SIGTERM
-	if force{
-		sig = syscall.SIGKILL
-	}
-	err := syscall.Kill(-h.Cmd.Process.Pid, sig)
-	if err == syscall.ESRCH {
+		h.mu.Unlock()
 		return nil
 	}
-	return err
+	h.State = StateKIlled
+	h.mu.Unlock()
+
+	sig := syscall.SIGTERM
+	if force {
+		sig = syscall.SIGKILL
+	}
+	_ = syscall.Kill(-h.Cmd.Process.Pid, sig)
+	return nil
 }
