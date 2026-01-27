@@ -41,8 +41,9 @@ const server = http.createServer((req,res) => {
     ) {
         const id = parts[1];
         if (!id) return;
+        const force = req.url.includes("force=1")
 
-        deleteProcess(req, res, manager, id)
+        deleteProcess(req, res, manager, id, force)
         return
     }
 

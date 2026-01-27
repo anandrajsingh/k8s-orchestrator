@@ -86,10 +86,10 @@ export async function getProcess(req: IncomingMessage, res: ServerResponse, mana
     return;
 }
 
-export async function deleteProcess(req: IncomingMessage, res: ServerResponse, manager: ProcessManager, id: string) {
+export async function deleteProcess(req: IncomingMessage, res: ServerResponse, manager: ProcessManager, id: string, force: boolean) {
 
     try {
-        manager.kill(id)
+        manager.kill(id, force)
     } catch (error) {
         res.statusCode = 400
         res.end(JSON.stringify({ error: (error as Error).message }))

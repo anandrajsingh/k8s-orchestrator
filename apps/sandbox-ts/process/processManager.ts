@@ -79,11 +79,13 @@ export class ProcessManager {
         }
     }
 
-    kill(id:string): void{
+    kill(id:string, force = false): void{
         const h = this.processes.get(id);
         if(!h) throw new Error("Process Not Found")
 
         if (h.state !== "running") throw new Error("Process is not running")
-        h.process.kill()
+
+        const signal = force ? "SIGKILL":"SIGTERM"
+        h.process.kill(signal)
     }
 }
