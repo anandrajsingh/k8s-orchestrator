@@ -82,6 +82,8 @@ func StreamProces(w http.ResponseWriter, r *http.Request, manager *process.Manag
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 
+	ctx := r.Context()
+
 	stdoutCh, unsubOut := h.Stdout.Subscribe()
 	stderrCh, unsubErr := h.Stderr.Subscribe()
 	defer unsubOut()
@@ -93,21 +95,23 @@ func StreamProces(w http.ResponseWriter, r *http.Request, manager *process.Manag
 		select{
 		case data, ok := <-stdoutCh:
 			if !ok {
-				w.Write([]byte{})
 				return
 			}
-			w.Write(data)
+			if _, err := w.Write(data); err != nil{
+				return
+			}
 			flusher.Flush()
 
 		case data, ok := <-stderrCh:
 			if !ok {
-				w.Write([]byte{})
 				return
 			}
-			w.Write(data)
+			if _, err := w.Write(data); err != nil{
+				return
+			}
 			flusher.Flush()
 
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		}
 	}
