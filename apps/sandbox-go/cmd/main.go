@@ -53,6 +53,26 @@ func main() {
 			return
 		}
 
+		if r.Method == http.MethodGet && len(parts) == 3 && parts[2] == "fs" {
+			api.ReadFile(w,r,manager, parts[1])
+			return
+		}
+
+		if r.Method == http.MethodPut && len(parts) == 3 && parts[2] == "fs" {
+			api.ReadFile(w,r,manager,parts[1])
+			return
+		}
+
+		if r.Method == http.MethodGet && len(parts) == 4 && parts[2] == "fs" && parts[3] == "list"{
+			api.ListDir(w,r,manager,parts[1])
+			return
+		}
+
+		if r.Method == http.MethodGet && len(parts) == 4 && parts[2] == "fs" && parts[3] == "stat"{
+			api.StatPath(w,r,manager,parts[1])
+			return
+		}
+
 		http.NotFound(w, r)
 	})
 
