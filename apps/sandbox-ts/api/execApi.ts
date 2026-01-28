@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from "http";
 import { ExecService } from "../service/execService";
 import { ExecRequest } from "../utils/types";
 import { ProcessManager } from "../process/processManager";
+import { StreamContext } from "../process/streamContext";
 
 export async function handleExec(req: IncomingMessage, res: ServerResponse, service: ExecService) {
     let body = "";
@@ -117,23 +118,31 @@ export async function streamProcess(req: IncomingMessage, res: ServerResponse, m
         "Transfer-Encoding": "chunked"
     });
 
+    const ctx = new StreamContext()
+
     const unsubStdout = handle.stdout.subscribe((chunk) => {
-        res.write(chunk)
+        if(!res.writableEnded){
+            res.write(chunk)
+        }
     })
     const unsubStderr = handle.stderr.subscribe((chunk) => {
-        res.write(chunk)
+        if(!res.writableEnded){
+            res.write(chunk)
+        }
     })
 
-    const cleanup = () => {
+    ctx.onclose(() => {
         unsubStdout();
         unsubStderr();
-        res.end()
-    };
+        if(!res.writableEnded){
+            res.end()
+        }
+    });
 
-    req.on("close", cleanup)
+    req.on("close", () => ctx.close())
 
-    handle.stdout.onClose(cleanup);
-    handle.stderr.onClose(cleanup);
+    handle.stdout.onClose(() => ctx.close());
+    handle.stderr.onClose(() => ctx.close());
 }
 
 export async function writeInput(req: IncomingMessage, res: ServerResponse, manager: ProcessManager, id: string) {
