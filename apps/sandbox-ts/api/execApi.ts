@@ -58,10 +58,14 @@ export async function handleProcessStart(req: IncomingMessage, res: ServerRespon
             cwd: parsedBody.cwd,
         };
 
-        const id = manager.start(execReq);
-
-        res.writeHead(200, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ id }))
+        try {
+            const id = await manager.start(execReq);
+            res.writeHead(200, { "Content-Type": "application/json" })
+            res.end(JSON.stringify({ id }))
+        } catch (error:any) {
+            res.statusCode = 500
+            res.end(error.message)
+        }
     })
 }
 
@@ -132,8 +136,8 @@ export async function streamProcess(req: IncomingMessage, res: ServerResponse, m
     handle.stderr.onClose(cleanup);
 }
 
-export async function writeInput(req: IncomingMessage, res: ServerResponse, manager: ProcessManager, id: string){
-    const chunks:Buffer[] = []
+export async function writeInput(req: IncomingMessage, res: ServerResponse, manager: ProcessManager, id: string) {
+    const chunks: Buffer[] = []
     req.on("data", (chunk) => {
         chunks.push(chunk)
     })
@@ -143,7 +147,7 @@ export async function writeInput(req: IncomingMessage, res: ServerResponse, mana
             manager.writeInput(id, data);
             res.statusCode = 204;
             res.end()
-        } catch (err:any) {
+        } catch (err: any) {
             res.statusCode = 400
             res.end(err.message)
         }

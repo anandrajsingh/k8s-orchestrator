@@ -3,6 +3,7 @@ import { deleteProcess, getProcess, handleExec, handleProcessStart, streamProces
 import { ExecService } from "../service/execService";
 import { ProcessExecutor } from "../executor/processExecutor";
 import { ProcessManager } from "../process/processManager";
+import { listDir, readFile, statPath, writeFile } from "./fsApi";
 
 const executor = new ProcessExecutor()
 const service = new ExecService(executor);
@@ -70,6 +71,31 @@ const server = http.createServer((req,res) => {
         writeInput(req, res, manager, id)
         return;
     }
+
+    if(req.method === "GET" && parts.length === 3 && parts[2] === "fs"){
+        if(!parts[1]) return;
+        readFile(req, res, manager, parts[1])
+        return
+    }
+
+    if(req.method === "PUT" && parts.length === 3 && parts[2] === "fs"){
+        if(!parts[1]) return;
+        writeFile(req, res, manager, parts[1])
+        return
+    }
+
+    if(req.method === "GET" && parts.length === 4 && parts[2] === "fs" && parts[3] === "list"){
+        if(!parts[1]) return;
+        listDir(req, res, manager, parts[1])
+        return
+    }
+
+    if(req.method === "GET" && parts.length === 4 && parts[2] === "fs" && parts[3] === "stat"){
+        if(!parts[1]) return;
+        statPath(req, res, manager, parts[1])
+        return
+    }
+
     res.statusCode = 404;
     res.end("Not found")
 })
