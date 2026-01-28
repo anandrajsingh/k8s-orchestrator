@@ -1,6 +1,7 @@
 import { ChildProcess } from "child_process"
 import { Broadcaster } from "./broadcaster"
 import { Writable } from "stream"
+import { FileSystem } from "../fs/filesystem"
 
 export enum ProcessState {
   CREATED = "created",
@@ -13,9 +14,12 @@ export interface ProcessHandle{
     id: string,
     process: ChildProcess,
     state: ProcessState,
+
     stdin: Writable
     stdout: Broadcaster<Buffer>,
     stderr: Broadcaster<Buffer>,
+    
+    fs: FileSystem
     exitCode? : number,
     error? : string
     cleanup: () => void

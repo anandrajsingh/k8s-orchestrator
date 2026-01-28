@@ -3,6 +3,9 @@ import { ProcessExecutor } from "../executor/processExecutor"
 import { ProcessHandle, ProcessState } from "./handle";
 import { ExecRequest } from "../utils/types";
 import { Broadcaster } from "./broadcaster";
+import * as fs from "fs/promises"
+import path from "path"
+import { FileSystem } from "../fs/filesystem";
 
 export class ProcessManager {
     private executor : ProcessExecutor;
@@ -13,7 +16,7 @@ export class ProcessManager {
         this.processes = new Map()
     }
 
-    start(req: ExecRequest):string {
+    async start(req: ExecRequest):Promise<string> {
         const { process } = this.executor.start(req);
         const id = randomUUID();
 
@@ -28,6 +31,9 @@ export class ProcessManager {
             stderrBroadcaster.publish(chunk)
         })
 
+        const rootDir = path.join("/tmp/envd", id);
+        await fs.mkdir(rootDir, {recursive: true});
+
         const handle: ProcessHandle = {
             id,
             process,
@@ -35,6 +41,7 @@ export class ProcessManager {
             stdin: process.stdin!,
             stdout: stdoutBroadcaster,
             stderr: stderrBroadcaster,
+            fs: new FileSystem(rootDir),
 
             cleanup: () => {
                 process.stdin?.destroy()
@@ -50,11 +57,7 @@ export class ProcessManager {
         })
 
         process.on("error", (err) => {
-            if(handle.state !== "running") return
-            stdoutBroadcaster.close()
-            stderrBroadcaster.close()
-            handle.error = err.message;
-            handle.state = ProcessState.EXITED
+            this.markError(id, err.message)
         })
 
         return id
