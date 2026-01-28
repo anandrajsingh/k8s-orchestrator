@@ -3,11 +3,14 @@ package process
 import (
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 
 	"sandbox-go/internal/executor"
+	"sandbox-go/internal/filesystem"
 	"sandbox-go/pkg/utils"
 
 	"github.com/google/uuid"
@@ -34,6 +37,11 @@ func (m *Manager) Start(req utils.ExecRequest) (string, error) {
 
 	id := uuid.NewString()
 
+	rootDir := filepath.Join("/tmp/envd", id)
+	if err := os.MkdirAll(rootDir, 0755); err != nil {
+		return "", err;
+	}
+
 	handle := &Handle{
 		ID:     id,
 		Cmd:    cmd,
@@ -41,6 +49,7 @@ func (m *Manager) Start(req utils.ExecRequest) (string, error) {
 		Stdin:  stdin,
 		Stdout: NewBroadcaster(),
 		Stderr: NewBroadcaster(),
+		FS: filesystem.New(rootDir),
 	}
 
 	m.mu.Lock()
