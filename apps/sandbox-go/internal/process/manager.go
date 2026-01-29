@@ -56,6 +56,7 @@ func (m *Manager) Start(req utils.ExecRequest) (string, error) {
 		ID:     id,
 		Cmd:    cmd,
 		State:  StateRunning,
+		MaxOutputBytes: 10 * 1024 *1024,
 		CreatedAt: time.Now(),
 		LastIOAt: time.Now(),
 		TTL: 15 *time.Minute,
@@ -83,9 +84,16 @@ func streamPipe(r io.ReadCloser, b *Broadcaster, h *Handle) {
 		n, err := r.Read(buf)
 		if n > 0 {
             h.mu.Lock()
+			h.OutputByes += int64(n)
 			h.LastIOAt = time.Now()
-            h.mu.Unlock()
-
+			
+			if h.OutputByes > h.MaxOutputBytes {
+				h.mu.Unlock()
+				_ = syscall.Kill(-h.Cmd.Process.Pid, syscall.SIGKILL)
+				return
+			}
+			
+			h.mu.Unlock()
 			b.Publish(buf[:n])
 		}
 		if err != nil {

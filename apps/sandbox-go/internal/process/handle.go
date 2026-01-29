@@ -21,6 +21,8 @@ type Handle struct {
 	Stderr *Broadcaster
 
 	FS *filesystem.Filesystem
+	MaxOutputBytes int64
+	OutputByes int64
 
 	ExitCode int
 	State    State
