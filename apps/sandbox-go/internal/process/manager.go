@@ -27,6 +27,8 @@ type Manager struct {
 	cancel context.CancelFunc
 }
 
+const idleTimeout = 3 *time.Minute
+
 func NewManager(exec *executor.ProcessExecutor) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
@@ -54,6 +56,9 @@ func (m *Manager) Start(req utils.ExecRequest) (string, error) {
 		ID:     id,
 		Cmd:    cmd,
 		State:  StateRunning,
+		CreatedAt: time.Now(),
+		LastIOAt: time.Now(),
+		TTL: 15 *time.Minute,
 		Stdin:  stdin,
 		Stdout: NewBroadcaster(),
 		Stderr: NewBroadcaster(),
@@ -64,19 +69,23 @@ func (m *Manager) Start(req utils.ExecRequest) (string, error) {
 	m.processes[id] = handle
 	m.mu.Unlock()
 
-	go streamPipe(stdout, handle.Stdout)
-	go streamPipe(stderr, handle.Stderr)
+	go streamPipe(stdout, handle.Stdout, handle)
+	go streamPipe(stderr, handle.Stderr, handle)
 
 	go m.wait(handle)
 
 	return id, nil
 }
 
-func streamPipe(r io.ReadCloser, b *Broadcaster) {
+func streamPipe(r io.ReadCloser, b *Broadcaster, h *Handle) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
+            h.mu.Lock()
+			h.LastIOAt = time.Now()
+            h.mu.Unlock()
+
 			b.Publish(buf[:n])
 		}
 		if err != nil {
@@ -157,6 +166,9 @@ func (m *Manager) WriteInput(id string, data []byte) error {
 		return errors.New("stdin not available")
 	}
 	_, err := h.Stdin.Write(data)
+	if err == nil{
+		h.LastIOAt = time.Now()
+	}
 	return err
 }
 
@@ -201,12 +213,29 @@ func (m *Manager) Supervisor() {
 }
 
 func (m *Manager) reconcile() {
+	now := time.Now()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for id, h := range m.processes {
 		if h.State == StateExited || h.State == StateKIlled {
 			delete(m.processes, id)
+			continue
+		}
+
+		if now.Sub(h.CreatedAt) > h.TTL {
+			_ = syscall.Kill(-h.Cmd.Process.Pid, syscall.SIGKILL)
+			h.State = StateKIlled
+			delete(m.processes, id)
+			continue
+		}
+
+		if now.Sub(h.LastIOAt) > idleTimeout{
+			_ = syscall.Kill(-h.Cmd.Process.Pid, syscall.SIGKILL)
+			h.State = StateKIlled
+			delete(m.processes, id)
+			continue
 		}
 	}
 }
