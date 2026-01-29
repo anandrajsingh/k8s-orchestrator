@@ -6,5 +6,5 @@ const (
 	StateCreated State = "created"
 	StateRunning State = "running"
 	StateExited State = "exited"
-	StateKIlled State = "killed"
+	StateKilled State = "killed"
 )

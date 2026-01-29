@@ -185,7 +185,7 @@ func (m *Manager) Kill(id string, force bool) error {
 		h.mu.Unlock()
 		return nil
 	}
-	h.State = StateKIlled
+	h.State = StateKilled
 	h.mu.Unlock()
 
 	sig := syscall.SIGTERM
@@ -219,21 +219,21 @@ func (m *Manager) reconcile() {
 	defer m.mu.Unlock()
 
 	for id, h := range m.processes {
-		if h.State == StateExited || h.State == StateKIlled {
+		if h.State == StateExited || h.State == StateKilled {
 			delete(m.processes, id)
 			continue
 		}
 
 		if now.Sub(h.CreatedAt) > h.TTL {
 			_ = syscall.Kill(-h.Cmd.Process.Pid, syscall.SIGKILL)
-			h.State = StateKIlled
+			h.State = StateKilled
 			delete(m.processes, id)
 			continue
 		}
 
 		if now.Sub(h.LastIOAt) > idleTimeout{
 			_ = syscall.Kill(-h.Cmd.Process.Pid, syscall.SIGKILL)
-			h.State = StateKIlled
+			h.State = StateKilled
 			delete(m.processes, id)
 			continue
 		}
