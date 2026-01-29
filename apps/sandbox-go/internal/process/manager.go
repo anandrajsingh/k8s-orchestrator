@@ -1,6 +1,7 @@
 package process
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"sandbox-go/internal/executor"
 	"sandbox-go/internal/filesystem"
@@ -20,12 +22,18 @@ type Manager struct {
 	executor  *executor.ProcessExecutor
 	processes map[string]*Handle
 	mu        sync.Mutex
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewManager(exec *executor.ProcessExecutor) *Manager {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		executor:  exec,
 		processes: make(map[string]*Handle),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
@@ -39,7 +47,7 @@ func (m *Manager) Start(req utils.ExecRequest) (string, error) {
 
 	rootDir := filepath.Join("/tmp/envd", id)
 	if err := os.MkdirAll(rootDir, 0755); err != nil {
-		return "", err;
+		return "", err
 	}
 
 	handle := &Handle{
@@ -49,7 +57,7 @@ func (m *Manager) Start(req utils.ExecRequest) (string, error) {
 		Stdin:  stdin,
 		Stdout: NewBroadcaster(),
 		Stderr: NewBroadcaster(),
-		FS: filesystem.New(rootDir),
+		FS:     filesystem.New(rootDir),
 	}
 
 	m.mu.Lock()
@@ -174,4 +182,42 @@ func (m *Manager) Kill(id string, force bool) error {
 	}
 	_ = syscall.Kill(-h.Cmd.Process.Pid, sig)
 	return nil
+}
+
+func (m *Manager) Supervisor() {
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-ticker.C:
+				m.reconcile()
+			}
+		}
+	}()
+}
+
+func (m *Manager) reconcile() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, h := range m.processes {
+		if h.State == StateExited || h.State == StateKIlled {
+			delete(m.processes, id)
+		}
+	}
+}
+
+func (m *Manager) Shutdown() {
+	m.cancel()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, h := range m.processes {
+		_ = syscall.Kill(-h.Cmd.Process.Pid, syscall.SIGKILL)
+	}
 }

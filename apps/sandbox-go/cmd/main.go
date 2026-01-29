@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"sandbox-go/internal/api"
 	"sandbox-go/internal/executor"
@@ -17,6 +21,7 @@ func main() {
 	exec := executor.NewProcessExecutor()
 	svc := service.NewExecService(exec)
 	manager := process.NewManager(exec)
+	manager.Supervisor()
 
 	mux := http.NewServeMux()
 	mux.Handle("/exec", api.HandleExec(svc))
@@ -76,6 +81,22 @@ func main() {
 		http.NotFound(w, r)
 	})
 
+	server := &http.Server{
+		Addr: ":3000",
+		Handler: mux,
+	}
+
+	ctx,stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func ()  {
+		<-ctx.Done()
+		log.Println("shutting down envd")
+
+		manager.Shutdown()
+		_ = server.Shutdown(context.Background())
+	}()
+
 	log.Println("Sandbox listening on port 3000")
-	log.Fatal(http.ListenAndServe(":3000", mux))
+	log.Fatal(server.ListenAndServe())
 }

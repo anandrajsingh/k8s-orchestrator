@@ -63,6 +63,7 @@ func (e *ProcessExecutor) Start(req utils.ExecRequest) (*exec.Cmd, io.WriteClose
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
+		Pdeathsig: syscall.SIGKILL,
 	}
 
 	if req.Cwd != ""{
