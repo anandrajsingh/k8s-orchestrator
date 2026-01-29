@@ -141,6 +141,8 @@ func (m *Manager) markExited(id string, code int, err error) {
 
 	h.Stdout.Close()
 	h.Stderr.Close()
+
+	os.RemoveAll(h.FS.Root())
 }
 
 func (m *Manager) Status(id string) (*Handle, error) {

@@ -15,6 +15,10 @@ func New(root string) *Filesystem{
 	return &Filesystem{root: root}
 }
 
+func (fs *Filesystem) Root() string {
+	return fs.root
+}
+
 func (fs *Filesystem) resolve(userpath string) (string, error){
 	if(filepath.IsAbs(userpath)){
 		return "", errors.New("absolute path not allowed")
